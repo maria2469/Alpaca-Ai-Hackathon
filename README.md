@@ -1,10 +1,15 @@
-# RegimePilot (practice project)
+# RegimePilot
 
-Practice project for the **Alpaca AI Trading Agents Hackathon** (Aug 28 - Sep 4, 2026).
+An autonomous SPY options trading agent for the **Alpaca AI Trading Agents
+Hackathon** (Aug 28 - Sep 4, 2026). This repository is the team's working
+submission; the code was developed in phases and moved here from an earlier
+practice repository.
 
-> **Disposable.** Until the organizers confirm whether pre-kickoff code is allowed,
-> treat this folder as practice, not the official submission. The judged submission
-> must use a **fresh Alpaca paper account funded with exactly $100,000**.
+> **Paper trading only.** Every client in this project is built with
+> `paper=True` hard-coded and startup aborts on any live-trading signal, so the
+> agent can only reach Alpaca's paper endpoint. Before submitting, check the
+> account in `.env` is the **fresh paper account funded with exactly $100,000**
+> the rules require: nothing in the code verifies that for you.
 
 ## Status: autonomous SPY options portfolio agent (paper)
 
@@ -222,8 +227,6 @@ the decision, each action's risk verdict, plan and receipt.
 
 ## Backtest and score a strategy change before it goes to paper
 
-[#backtest-and-score-a-strategy-change-before-it-goes-to-paper](#backtest-and-score-a-strategy-change-before-it-goes-to-paper)
-
 `backtest.py` replays historical SPY minute bars through the **same** pure
 pipeline the live runner uses (`features.build_feature_packet` ->
 `gates.evaluate_gates` -> `regime.classify_regime` -> `decision.stub_proposal`
@@ -253,16 +256,28 @@ exists and is tested, but wiring its output into `EvidencePacket` and adding
 the regime-aware confidence override described in `decision.py`'s docstring
 is the next step, not yet done here.
 
-Bring your own historical minute bars as a CSV (`timestamp,open,high,low,close,volume`,
-one row per minute); nothing here calls Alpaca's historical bars endpoint for you:
+Both commands take historical minute bars as a CSV
+(`timestamp,open,high,low,close,volume`, one row per minute).
+`scripts/export_historical_bars.py` fetches them for you from Alpaca's IEX
+historical bars (read-only, same paper-only client construction as the rest of
+the project, submits nothing); it is not part of the trading pipeline.
+`data/spy_minute_bars.csv` is committed as an **empty placeholder** — a header
+row and no data — so run the export before the first backtest:
 
-```
-uv run python -m regimepilot.backtest --csv path/to/spy_minute_bars.csv
-uv run python -m regimepilot.backtest --csv path/to/spy_minute_bars.csv --json
+```bash
+uv run python scripts/export_historical_bars.py \
+    --start 2026-03-01 --end 2026-08-27 --out data/spy_minute_bars.csv
 
-uv run python -m regimepilot.score --csv path/to/spy_minute_bars.csv
-uv run python -m regimepilot.score --csv path/to/spy_minute_bars.csv --json
+uv run python -m regimepilot.backtest --csv data/spy_minute_bars.csv
+uv run python -m regimepilot.backtest --csv data/spy_minute_bars.csv --json
+
+uv run python -m regimepilot.score --csv data/spy_minute_bars.csv
+uv run python -m regimepilot.score --csv data/spy_minute_bars.csv --json
 ```
+
+How much history comes back depends on the Alpaca plan behind your keys: the
+IEX free tier covers only recent history, so check the plan's data window
+before concluding a thin CSV means something is broken.
 
 ## Layout
 
@@ -271,6 +286,10 @@ uv run python -m regimepilot.score --csv path/to/spy_minute_bars.csv --json
 ├── .env.example
 ├── pyproject.toml
 ├── README.md
+├── data/
+│   └── spy_minute_bars.csv   # empty placeholder; fill with the export script
+├── scripts/
+│   └── export_historical_bars.py  # read-only Alpaca bar export for backtest.py
 ├── src/regimepilot/
 │   ├── config.py         # credential loading + paper-trading guards
 │   ├── smoke_test.py     # Phase 1 connectivity check
