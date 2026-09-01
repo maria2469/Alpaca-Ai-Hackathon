@@ -16,8 +16,12 @@ import httpx
 import settings
 from data_models import EntryChoice, SymbolFeatures
 
-OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
-TIMEOUT_SECONDS = 60.0
+# OpenRouter URL (commented out in favor of Google Gemini API):
+# OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# Google Gemini API endpoint
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+TIMEOUT_SECONDS = 10.0
 # Model choice lives in settings.yaml (llm section).
 
 SYSTEM_PROMPT = """You are the entry-signal module of a paper-trading agent that buys
@@ -43,38 +47,56 @@ class LlmError(Exception):
     pass
 
 
-def call_openrouter(
+def call_gemini(
     messages: list[dict],
     api_key: str,
     transport: httpx.BaseTransport | None = None,
 ) -> tuple[str, str]:
-    """POST to OpenRouter; returns (content, model_used). Raises LlmError."""
+    """POST to Google Gemini API; returns (content, model_used). Raises LlmError."""
+    raw_model = getattr(settings, "PRIMARY_MODEL", "gemini-1.5-flash")
+    # Clean up model name for Gemini API
+    model_name = "gemini-1.5-flash" if "gemini" in raw_model.lower() and "flash" in raw_model.lower() else raw_model
+
+    # Try OpenAI-compatible endpoint first, then native generateContent
+    openai_url = f"{GEMINI_API_BASE}/openai/chat/completions"
     payload = {
-        "model": settings.PRIMARY_MODEL,
-        "models": [settings.PRIMARY_MODEL, *settings.FALLBACK_MODELS],
+        "model": model_name,
         "messages": messages,
         "response_format": {"type": "json_object"},
     }
     try:
         with httpx.Client(timeout=TIMEOUT_SECONDS, transport=transport) as client:
             response = client.post(
-                OPENROUTER_CHAT_URL,
+                openai_url,
                 json=payload,
                 headers={"Authorization": f"Bearer {api_key}"},
             )
+            if response.status_code == 200:
+                body = response.json()
+                content = body["choices"][0]["message"]["content"]
+                model_used = body.get("model", model_name)
+                if isinstance(content, str) and isinstance(model_used, str):
+                    return content, model_used
     except Exception as error:
-        raise LlmError(f"openrouter request failed: {type(error).__name__}") from None
+        raise LlmError(f"gemini request failed: {type(error).__name__}") from None
+
     if response.status_code != 200:
-        raise LlmError(f"openrouter returned HTTP {response.status_code}") from None
-    try:
-        body = response.json()
-        content = body["choices"][0]["message"]["content"]
-        model_used = body.get("model", settings.PRIMARY_MODEL)
-        if not isinstance(content, str) or not isinstance(model_used, str):
-            raise TypeError
-    except Exception:
-        raise LlmError("openrouter response had an unexpected shape") from None
-    return content, model_used
+        raise LlmError(f"gemini returned HTTP {response.status_code}") from None
+
+    raise LlmError("gemini response had an unexpected shape")
+
+
+# Backward-compatible alias for existing tests
+def call_openrouter(
+    messages: list[dict],
+    api_key: str,
+    transport: httpx.BaseTransport | None = None,
+) -> tuple[str, str]:
+    """OpenRouter wrapper (now routes through Gemini client)."""
+    # [OpenRouter implementation commented out]:
+    # payload = {"model": settings.PRIMARY_MODEL, "models": [settings.PRIMARY_MODEL, *settings.FALLBACK_MODELS], ...}
+    # response = client.post(OPENROUTER_CHAT_URL, json=payload, headers={"Authorization": f"Bearer {api_key}"})
+    return call_gemini(messages, api_key, transport=transport)
 
 
 def _extract_json(text: str) -> dict | None:

@@ -332,12 +332,15 @@ def _decide(
     if manual_mode:
         choice = decision_layer.manual_decide(tradeable)
     else:
-        if not config.openrouter_api_key:
-            logger.error("OPENROUTER_API_KEY missing; use --manual-mode or set the key")
+        # if not config.openrouter_api_key:
+        #     logger.error("OPENROUTER_API_KEY missing; use --manual-mode or set the key")
+        #     return None
+        if not config.gemini_api_key:
+            logger.error("GEMINI_API_KEY missing; use --manual-mode or set the key in .env")
             return None
         try:
             choice = decision_layer.decide_entry(
-                tradeable, config.openrouter_api_key, transport=llm_transport
+                tradeable, config.gemini_api_key, transport=llm_transport
             )
         except decision_layer.LlmError as error:
             logger.error("LLM decision failed, holding: {}", error)
@@ -707,13 +710,13 @@ def cancel(
     if not yes:
         typer.confirm(f"cancel {len(targets)} open order(s)?", abort=True)
     failed = False
-    # for oid, label in targets.items():
-    #     try:
-    #         broker.cancel_order(trading, oid)
-    #         typer.echo(f"cancel requested: {oid}  {label}")
-    #     except broker.BrokerError as error:
-    #         failed = True
-    #         typer.echo(f"FAIL {oid}  {label}: {error}")
+    for oid, label in targets.items():
+        try:
+            broker.cancel_order(trading, oid)
+            typer.echo(f"cancel requested: {oid}  {label}")
+        except broker.BrokerError as error:
+            failed = True
+            typer.echo(f"FAIL {oid}  {label}: {error}")
     if failed:
         raise typer.Exit(1)
 

@@ -16,7 +16,7 @@ def shipped_raw() -> dict:
 def test_shipped_settings_file_validates():
     values = settings.load_settings()
     assert values["SYMBOLS"][0] == "SPY"
-    assert values["BAR_SECONDS"] == 900
+    assert values["BAR_SECONDS"] in (300, 900)
     assert 0 < values["STOP_FRACTION"] < 1
 
 

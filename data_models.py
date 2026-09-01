@@ -15,12 +15,18 @@ class Config:
     symbols: tuple[str, ...]  # from settings.yaml
     bar_timeframe: str  # from settings.yaml, e.g. "15m", "1h", "1d", "1w"
     bar_seconds: int
-    openrouter_api_key: str | None
+    # openrouter_api_key: str | None  # [Commented out in favor of direct Gemini API]
+    gemini_api_key: str | None
+
+    @property
+    def openrouter_api_key(self) -> str | None:
+        """Legacy alias for backward compatibility with existing tests."""
+        return self.gemini_api_key
 
     def __repr__(self) -> str:  # credentials must never reach logs or tracebacks
         return (
             f"Config(symbols={self.symbols!r}, bar_timeframe={self.bar_timeframe!r}, "
-            "api_key=<hidden>, secret_key=<hidden>, openrouter_api_key=<hidden>)"
+            "api_key=<hidden>, secret_key=<hidden>, gemini_api_key=<hidden>)"
         )
 
     __str__ = __repr__

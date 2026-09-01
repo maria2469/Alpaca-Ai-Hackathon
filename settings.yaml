@@ -46,5 +46,5 @@ exits:                       # mechanical, checked every cycle — the LLM is ne
   reversal_exit: true        # close a spread when an entry event fires AGAINST it (e.g. gap_down while holding a call spread)
 
 llm:                         # OpenRouter models for the entry decision (skipped with --manual-mode)
-  primary_model: z-ai/glm-5.3-flash
+  primary_model: gemini-3-flash-preview
   fallback_models: [minimax/minimax-m3:free, nvidia/nemotron-3-super-120b-a12b:free]

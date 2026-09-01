@@ -14,6 +14,15 @@ dependencies = [
     # The regular session is defined in America/New_York. Windows ships no IANA
     # database, so zoneinfo needs this.
     "tzdata>=2024.1",
+    # Multi-agent framework
+    "langchain>=0.3.0",
+    "langgraph>=0.2.0",
+    "langchain-openai>=0.2.0",
+    # Performance monitoring
+    "asyncio>=3.4.3",
+    # Analytics and calculations
+    "scipy>=1.14.0",
+    "numpy>=1.26.0",
 ]
 
 [dependency-groups]

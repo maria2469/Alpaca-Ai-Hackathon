@@ -89,14 +89,16 @@ def load_config(env: dict[str, str] | None = None) -> Config:
     secret_key = env.get("ALPACA_SECRET_KEY", "").strip()
     if not api_key or not secret_key:
         raise ConfigError("ALPACA_API_KEY and ALPACA_SECRET_KEY are required")
-    openrouter = env.get("OPENROUTER_API_KEY", "").strip() or None
+    # OpenRouter API key (commented out in favor of direct Gemini API):
+    # openrouter = env.get("OPENROUTER_API_KEY", "").strip() or None
+    gemini_key = env.get("GEMINI_API_KEY", "").strip() or env.get("GOOGLE_API_KEY", "").strip() or env.get("OPENROUTER_API_KEY", "").strip() or None
     return Config(
         api_key=api_key,
         secret_key=secret_key,
         symbols=settings.SYMBOLS,
         bar_timeframe=settings.BAR_TIMEFRAME,
         bar_seconds=settings.BAR_SECONDS,
-        openrouter_api_key=openrouter,
+        gemini_api_key=gemini_key,
     )
 
 
