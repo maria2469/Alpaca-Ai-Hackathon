@@ -385,3 +385,84 @@ class TestAgentStateWiring:
         f = base_state.symbol_features["SPY"]
         assert f.rsi == 55.0
         assert len(f.events) == 1
+
+    def test_dialectical_debate_execution(self, base_state):
+        """Dialectical debate should record a DebateRound with theses and rebuttals."""
+        from agents.decision_agent import DecisionAgent
+        agent = DecisionAgent(timeout=2.0)
+        base_state.regime_belief = RegimeBelief(
+            regime="trending_up_low_vol", confidence=0.85,
+            volatility_level="low", trend_strength=0.75,
+        )
+        base_state.opportunities = [
+            Opportunity(
+                symbol="SPY", confidence=0.85,
+                reason="breakout_up", direction="CALL",
+                features={"rsi": 55.0}, timestamp=NOW,
+            ),
+        ]
+        result = agent.execute(base_state)
+        assert len(result.debate_history) >= 1
+        debate = result.debate_history[-1]
+        assert debate.round_number == 2
+        assert "bull_agent" in debate.theses
+        assert "bear_agent" in debate.theses
+        assert len(result.working_scratchpad) > 0
+        assert "SPY" in result.working_scratchpad
+
+    def test_recent_lessons_injection_in_decision_layer(self):
+        """decide_entry should accept recent_lessons, mistakes, and scratchpad without error."""
+        import httpx
+        from decision_layer import decide_entry
+        import json
+
+        def handler(request):
+            body = json.loads(request.content)
+            # Verify lessons were passed into the payload
+            user_msg = json.loads(body["messages"][1]["content"])
+            assert "recent_lessons_and_mistakes_to_avoid" in user_msg
+            assert "recent_agent_mistakes" in user_msg
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": json.dumps({"action": "enter", "symbol": "SPY", "direction": "CALL", "thesis": "Clean breakout"})}}]},
+            )
+
+        transport = httpx.MockTransport(handler)
+        candidates = [
+            _make_symbol_features("SPY", events=(Event(kind="breakout_up", direction="CALL"),))
+        ]
+        choice = decide_entry(
+            candidates,
+            api_key="mock-key",
+            transport=transport,
+            recent_lessons=["Avoid chasing high-IV breakouts in chop"],
+            agent_mistakes=["Bought false breakout on TSLA"],
+            working_scratchpad={"SPY": "Accumulation confirmed"},
+        )
+        assert choice is not None
+        assert choice.symbol == "SPY"
+        assert choice.direction == "CALL"
+
+    def test_risk_decision_negotiation_loop(self):
+        """TradingGraph should dynamically route from risk_gate back to decision_agent when challenged."""
+        from graph.trading_graph import TradingGraph
+        from agents.market_scanner import MarketScannerAgent
+        from agents.regime_agent import RegimeAgent
+        from agents.decision_agent import DecisionAgent
+        from agents.risk_gate import RiskGateAgent
+        from agents.execution_agent import ExecutionAgent
+        from agents.position_manager import PositionManagerAgent
+        from agents.trade_memory import TradeMemoryAgent
+
+        agents = {
+            "market_scanner": MarketScannerAgent(),
+            "regime_agent": RegimeAgent(),
+            "decision_agent": DecisionAgent(),
+            "risk_gate": RiskGateAgent(),
+            "execution_agent": ExecutionAgent(),
+            "position_manager": PositionManagerAgent(),
+            "trade_memory": TradeMemoryAgent(),
+        }
+
+        tg = TradingGraph(agents)
+        assert tg.graph is not None

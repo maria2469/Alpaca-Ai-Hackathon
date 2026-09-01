@@ -12,6 +12,7 @@ details and credentials can never leak into logs or tracebacks.
 from __future__ import annotations
 
 import os
+import concurrent.futures
 from datetime import date, timedelta
 from typing import Any, Callable
 
@@ -279,12 +280,23 @@ def fetch_contracts(
 
 
 def fetch_option_snapshots(option_data: Any, symbols: list[str]) -> dict[str, Any]:
+    """Fetch option snapshots with parallelized batch execution for multi-hundred symbol lists."""
+    if not symbols:
+        return {}
+    if len(symbols) <= SNAPSHOT_BATCH:
+        request = OptionSnapshotRequest(symbol_or_symbols=symbols, feed=OPTION_FEED)
+        return guarded("snapshots read", lambda: option_data.get_option_snapshot(request))
+
+    batches = [symbols[i : i + SNAPSHOT_BATCH] for i in range(0, len(symbols), SNAPSHOT_BATCH)]
     snapshots: dict[str, Any] = {}
-    for start in range(0, len(symbols), SNAPSHOT_BATCH):
-        batch = symbols[start : start + SNAPSHOT_BATCH]
+
+    def _fetch_batch(batch: list[str]) -> dict[str, Any]:
         request = OptionSnapshotRequest(symbol_or_symbols=batch, feed=OPTION_FEED)
-        raw = guarded("snapshots read", lambda: option_data.get_option_snapshot(request))
-        snapshots.update(raw)
+        return guarded("snapshots read", lambda: option_data.get_option_snapshot(request))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(batches), 8)) as executor:
+        for result in executor.map(_fetch_batch, batches):
+            snapshots.update(result)
     return snapshots
 
 

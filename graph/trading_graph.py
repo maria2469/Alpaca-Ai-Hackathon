@@ -28,25 +28,64 @@ class TradingGraph:
         self.max_cycle_time = 10.0  # Maximum allowed time for full cycle (seconds)
     
     def _build_graph(self) -> StateGraph:
-        """Build the LangGraph workflow with parallel execution where possible."""
+        """Build the complete 7-step LangGraph workflow with risk-decision negotiation loop."""
         workflow = StateGraph(AgentState)
         
-        # Add agent nodes
+        # Add 7 agent nodes
         workflow.add_node("market_scanner", self._market_scanner_node)
         workflow.add_node("regime_agent", self._regime_agent_node)
         workflow.add_node("decision_agent", self._decision_agent_node)
         workflow.add_node("risk_gate", self._risk_gate_node)
         workflow.add_node("execution_agent", self._execution_agent_node)
+        workflow.add_node("position_manager", self._position_manager_node)
+        workflow.add_node("trade_memory", self._trade_memory_node)
         
-        # Define edges (workflow)
+        # Define workflow edges
         workflow.set_entry_point("market_scanner")
         workflow.add_edge("market_scanner", "regime_agent")
         workflow.add_edge("regime_agent", "decision_agent")
         workflow.add_edge("decision_agent", "risk_gate")
-        workflow.add_edge("risk_gate", "execution_agent")
-        workflow.add_edge("execution_agent", END)
+        
+        # Conditional Edge: Risk Gate -> Decision Agent (Negotiation loop) OR Execution Agent
+        def route_after_risk_gate(state: AgentState) -> str:
+            """Dynamic negotiation: if Risk Gate challenges the contract, loop back for counter-proposal."""
+            if (
+                state.risk_decision
+                and not state.risk_decision.approved
+                and state.critic_analysis
+                and state.critic_analysis.consensus_action in ("BUY_CALL", "BUY_PUT")
+                and state.negotiation_count == 0
+                and any(term in state.risk_decision.reason.lower() for term in ("no acceptable spread", "low confidence", "rejected"))
+            ):
+                logger.info("LangGraph: Risk Gate challenged decision -> Routing back to Decision Agent for counter-proposal")
+                state.negotiation_count += 1
+                return "decision_agent"
+            return "execution_agent"
+
+        workflow.add_conditional_edges(
+            "risk_gate",
+            route_after_risk_gate,
+            {
+                "decision_agent": "decision_agent",
+                "execution_agent": "execution_agent",
+            },
+        )
+
+        workflow.add_edge("execution_agent", "position_manager")
+        workflow.add_edge("position_manager", "trade_memory")
+        workflow.add_edge("trade_memory", END)
         
         return workflow.compile(checkpointer=self.checkpointer)
+
+    def save_graph_image(self, output_path: str = "assets/langgraph_architecture.png") -> None:
+        """Render and save the actual LangGraph StateGraph as a PNG file."""
+        try:
+            png_bytes = self.graph.get_graph().draw_mermaid_png()
+            with open(output_path, "wb") as f:
+                f.write(png_bytes)
+            logger.info(f"LangGraph: Saved architecture diagram to {output_path}")
+        except Exception as e:
+            logger.warning(f"LangGraph: Could not render graph PNG: {e}")
     
     async def _market_scanner_node(self, state: AgentState) -> AgentState:
         """Market scanner agent node with performance monitoring."""
@@ -149,6 +188,40 @@ class TradingGraph:
         
         execution_time = (datetime.utcnow() - start_time).total_seconds()
         state.execution_times["execution_agent"] = execution_time
+        
+        return state
+
+    async def _position_manager_node(self, state: AgentState) -> AgentState:
+        """Position manager agent node (real-time PnL, DTE time stop, TP, stop-loss)."""
+        start_time = datetime.utcnow()
+        logger.info("Executing Position Manager Agent")
+        
+        try:
+            agent = self.agents["position_manager"]
+            result = await self._execute_agent_with_timeout(agent, state, timeout=3.0)
+            state = result
+        except Exception as e:
+            logger.error(f"Position Manager failed: {e}")
+        
+        execution_time = (datetime.utcnow() - start_time).total_seconds()
+        state.execution_times["position_manager"] = execution_time
+        
+        return state
+
+    async def _trade_memory_node(self, state: AgentState) -> AgentState:
+        """Trade memory agent node (lifecycle trace, signal calibration, mistake analysis)."""
+        start_time = datetime.utcnow()
+        logger.info("Executing Trade Memory Agent")
+        
+        try:
+            agent = self.agents["trade_memory"]
+            result = await self._execute_agent_with_timeout(agent, state, timeout=2.0)
+            state = result
+        except Exception as e:
+            logger.error(f"Trade Memory failed: {e}")
+        
+        execution_time = (datetime.utcnow() - start_time).total_seconds()
+        state.execution_times["trade_memory"] = execution_time
         
         return state
     

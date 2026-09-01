@@ -186,6 +186,16 @@ class AnalyticsReport:
 
 
 @dataclass
+class DebateRound:
+    """A round of dialectical cross-examination between Bull, Bear, and Options specialists."""
+    round_number: int
+    theses: Dict[str, str] = field(default_factory=dict)       # agent_name -> initial proposal
+    rebuttals: Dict[str, str] = field(default_factory=dict)    # agent_name -> counter-argument / rebuttal
+    concessions: List[str] = field(default_factory=list)       # concession points acknowledged
+    critic_notes: str = ""                                     # Critic's synthesis for this round
+
+
+@dataclass
 class AgentState:
     """Shared state passed between agents in the LangGraph."""
     
@@ -201,8 +211,10 @@ class AgentState:
     # Regime Analysis
     regime_belief: Optional[RegimeBelief] = None
     
-    # Agent Perspectives
+    # Agent Perspectives & Multi-Turn Deliberation
     agent_perspectives: Dict[str, AgentPerspective] = field(default_factory=dict)
+    debate_history: List[DebateRound] = field(default_factory=list)
+    working_scratchpad: Dict[str, str] = field(default_factory=dict)
     
     # Critic Evaluation
     critic_analysis: Optional[CriticAnalysis] = None
@@ -211,6 +223,7 @@ class AgentState:
     risk_decision: Optional[RiskDecision] = None
     selected_spread: Optional[data_models.SpreadQuote] = None
     order_plan: Optional[data_models.OrderPlan] = None
+    negotiation_count: int = 0  # Counter for risk-decision negotiation loops (max 1 retry)
     
     # Execution
     execution_plan: Optional[ExecutionPlan] = None

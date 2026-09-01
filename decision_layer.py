@@ -24,14 +24,15 @@ GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 TIMEOUT_SECONDS = 10.0
 # Model choice lives in settings.yaml (llm section).
 
-SYSTEM_PROMPT = """You are the entry-signal module of a paper-trading agent that buys
+SYSTEM_PROMPT = """You are the entry-signal module of an institutional multi-agent trading system that buys
 debit vertical spreads on liquid US options. Every candidate underlying has fired
 at least one technical event on its latest completed bar:
   gap_up / gap_down           - bar opened more than 2 ATR away from the prior close
   breakout_up / breakout_down - bar body (close minus open) exceeded 2 ATR
   macd_cross_up / macd_cross_down - MACD histogram crossed zero
-Each candidate also carries its RSI, ATR and MACD histogram readings. Choose at
-most ONE candidate to enter, or pass.
+Each candidate also carries its RSI, ATR, MACD histogram readings, and ongoing multi-bar scratchpad thesis.
+
+Pay close attention to 'recent_lessons_and_mistakes_to_avoid' and 'recent_agent_mistakes' — do NOT repeat past false breakout entries into resistance or choppy regimes.
 
 Reply with strict JSON only:
 {"action": "enter" | "pass", "symbol": "<one of the candidate symbols>",
@@ -93,9 +94,6 @@ def call_openrouter(
     transport: httpx.BaseTransport | None = None,
 ) -> tuple[str, str]:
     """OpenRouter wrapper (now routes through Gemini client)."""
-    # [OpenRouter implementation commented out]:
-    # payload = {"model": settings.PRIMARY_MODEL, "models": [settings.PRIMARY_MODEL, *settings.FALLBACK_MODELS], ...}
-    # response = client.post(OPENROUTER_CHAT_URL, json=payload, headers={"Authorization": f"Bearer {api_key}"})
     return call_gemini(messages, api_key, transport=transport)
 
 
@@ -140,12 +138,16 @@ def decide_entry(
     candidates: list[SymbolFeatures],
     api_key: str,
     transport: httpx.BaseTransport | None = None,
+    recent_lessons: list[str] | None = None,
+    agent_mistakes: list[str] | None = None,
+    working_scratchpad: dict[str, str] | None = None,
 ) -> EntryChoice | None:
-    """Ask the LLM to pick at most one entry from the gate-passing candidates."""
+    """Ask the LLM to pick at most one entry, conditioned on past trade lessons and scratchpad."""
     tradeable = [c for c in candidates if c.gate_block is None]
     if not tradeable:
         return None
-    briefing = {
+    
+    briefing: dict = {
         "candidates": [
             {
                 "symbol": c.symbol,
@@ -154,10 +156,17 @@ def decide_entry(
                 "rsi": c.rsi,
                 "atr": c.atr,
                 "macd_hist": c.macd_hist,
+                "ongoing_scratchpad_thesis": (working_scratchpad or {}).get(c.symbol),
             }
             for c in tradeable
-        ]
+        ],
     }
+
+    if recent_lessons:
+        briefing["recent_lessons_and_mistakes_to_avoid"] = recent_lessons[-4:]
+    if agent_mistakes:
+        briefing["recent_agent_mistakes"] = agent_mistakes[-3:]
+
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": json.dumps(briefing)},
