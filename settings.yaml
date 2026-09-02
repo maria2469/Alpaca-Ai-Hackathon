@@ -17,6 +17,9 @@ signals:                     # technical analysis + entry events
   macd_slow: 26              # slow EMA length
   macd_signal: 9             # EMA length of the MACD signal line
   atr_event_mult: 2.0        # gap/breakout events fire only above this many ATRs (higher = rarer, stronger)
+  macd_min_atr_mult: 0.05    # MACD cross events fire only when |histogram| >= this fraction of ATR (chop filter)
+  rsi_call_max: 70.0         # CALL events are hard-blocked at RSI >= this (overbought exhaustion gate)
+  rsi_put_min: 30.0          # PUT events are hard-blocked at RSI <= this (oversold exhaustion gate)
   stale_bar_factor: 2.0      # block entries when the last bar is older than this many bar durations
   min_bars: 40               # completed bars required before indicators count (>= macd_slow + macd_signal)
 

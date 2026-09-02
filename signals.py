@@ -48,7 +48,13 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def detect_events(df: pd.DataFrame) -> tuple[Event, ...]:
-    """Events on the latest completed bar of an add_indicators() frame."""
+    """Events on the latest completed bar of an add_indicators() frame.
+
+    Hard gates applied here (both are deterministic, no LLM involved):
+    - MACD cross: |histogram| must be >= macd_min_atr_mult * ATR (chop filter)
+    - RSI exhaustion: CALL events dropped when RSI >= rsi_call_max (70.0);
+                      PUT events dropped when RSI <= rsi_put_min (30.0)
+    """
     if len(df) < 2 or "atr" not in df.columns:
         return ()
     last, prev = df.iloc[-1], df.iloc[-2]
@@ -56,21 +62,40 @@ def detect_events(df: pd.DataFrame) -> tuple[Event, ...]:
     if pd.isna(atr) or atr <= 0:
         return ()
 
+    rsi = last.get("rsi") if hasattr(last, "get") else (last["rsi"] if "rsi" in last.index else None)
+    if pd.isna(rsi) if rsi is not None else True:
+        rsi = None
+
+    def _rsi_ok(direction: str) -> bool:
+        """Return False when RSI is in the exhaustion zone for this direction."""
+        if rsi is None:
+            return True  # no RSI available: don't block
+        if direction == "CALL" and rsi >= settings.RSI_CALL_MAX:
+            return False
+        if direction == "PUT" and rsi <= settings.RSI_PUT_MIN:
+            return False
+        return True
+
     events: list[Event] = []
     gap = last["open"] - prev["close"]
     if abs(gap) > settings.ATR_EVENT_MULT * atr:
-        events.append(Event(kind="gap_up" if gap > 0 else "gap_down",
-                            direction="CALL" if gap > 0 else "PUT"))
+        direction = "CALL" if gap > 0 else "PUT"
+        if _rsi_ok(direction):
+            events.append(Event(kind="gap_up" if gap > 0 else "gap_down", direction=direction))
     body = last["close"] - last["open"]
     if abs(body) > settings.ATR_EVENT_MULT * atr:
-        events.append(Event(kind="breakout_up" if body > 0 else "breakout_down",
-                            direction="CALL" if body > 0 else "PUT"))
+        direction = "CALL" if body > 0 else "PUT"
+        if _rsi_ok(direction):
+            events.append(Event(kind="breakout_up" if body > 0 else "breakout_down", direction=direction))
     hist, prev_hist = last["macd_hist"], prev["macd_hist"]
     if not pd.isna(hist) and not pd.isna(prev_hist):
-        if prev_hist <= 0 < hist:
-            events.append(Event(kind="macd_cross_up", direction="CALL"))
-        elif prev_hist >= 0 > hist:
-            events.append(Event(kind="macd_cross_down", direction="PUT"))
+        macd_threshold = settings.MACD_MIN_ATR_MULT * atr
+        if prev_hist <= 0 < hist and hist >= macd_threshold:
+            if _rsi_ok("CALL"):
+                events.append(Event(kind="macd_cross_up", direction="CALL"))
+        elif prev_hist >= 0 > hist and abs(hist) >= macd_threshold:
+            if _rsi_ok("PUT"):
+                events.append(Event(kind="macd_cross_down", direction="PUT"))
     return tuple(events)
 
 

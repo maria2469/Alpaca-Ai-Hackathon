@@ -167,6 +167,34 @@ def parse_entry_choice(text: str, allowed_symbols: set[str], model: str) -> Entr
     return EntryChoice(symbol=symbol.upper(), direction=direction, thesis=thesis, model=model)
 
 
+def compute_quantitative_edge_score(c: SymbolFeatures) -> float:
+    """Quantitative scoring function. Determines technical qualification before invoking LLM."""
+    if not c.events:
+        return 0.0
+    score = 0.50
+    score += len(c.events) * 0.10
+
+    if c.rsi is not None:
+        for e in c.events:
+            if e.direction == "CALL":
+                if 40.0 <= c.rsi <= 68.0:
+                    score += 0.15
+                elif c.rsi >= settings.RSI_CALL_MAX:
+                    score -= 0.25
+            elif e.direction == "PUT":
+                if 32.0 <= c.rsi <= 60.0:
+                    score += 0.15
+                elif c.rsi <= settings.RSI_PUT_MIN:
+                    score -= 0.25
+
+    if c.macd_hist is not None and c.atr is not None:
+        macd_threshold = settings.MACD_MIN_ATR_MULT * c.atr
+        if abs(c.macd_hist) >= macd_threshold:
+            score += 0.10
+
+    return max(0.0, min(1.0, score))
+
+
 def decide_entry(
     candidates: list[SymbolFeatures],
     api_key: str,
@@ -180,6 +208,11 @@ def decide_entry(
     if not tradeable:
         return None
     
+    # Quantitative edge pre-filter: LLM is ONLY invoked on setups with score >= 0.55
+    qualified = [c for c in tradeable if compute_quantitative_edge_score(c) >= 0.55]
+    if not qualified:
+        return None
+    
     briefing: dict = {
         "candidates": [
             {
@@ -189,9 +222,10 @@ def decide_entry(
                 "rsi": c.rsi,
                 "atr": c.atr,
                 "macd_hist": c.macd_hist,
+                "quantitative_edge_score": round(compute_quantitative_edge_score(c), 2),
                 "ongoing_scratchpad_thesis": (working_scratchpad or {}).get(c.symbol),
             }
-            for c in tradeable
+            for c in qualified
         ],
     }
 

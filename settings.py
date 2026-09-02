@@ -85,7 +85,8 @@ def _string_list(value: object, path: str) -> tuple[str, ...]:
 _TOP_KEYS = {"symbols", "bar_timeframe", "loop_interval_seconds",
              "signals", "screener", "risk", "exits", "llm"}
 _SIGNAL_KEYS = {"rsi_period", "atr_period", "macd_fast", "macd_slow", "macd_signal",
-                "atr_event_mult", "stale_bar_factor", "min_bars"}
+                "atr_event_mult", "macd_min_atr_mult", "rsi_call_max", "rsi_put_min",
+                "stale_bar_factor", "min_bars"}
 _SCREENER_KEYS = {"min_dte", "max_expiry_lookahead_days", "expiries_to_screen",
                   "strike_band_pct", "otm_only", "min_width_pct", "max_width_pct",
                   "min_open_interest", "max_quote_age_seconds", "max_leg_spread_bps",
@@ -125,6 +126,11 @@ def validate(raw: object) -> dict[str, object]:
     if values["MACD_FAST"] >= values["MACD_SLOW"]:
         _fail("signals.macd_fast", "must be smaller than macd_slow", sig["macd_fast"])
     values["ATR_EVENT_MULT"] = _number(sig, "signals", "atr_event_mult", 0, lo_open=True)
+    values["MACD_MIN_ATR_MULT"] = _number(sig, "signals", "macd_min_atr_mult", 0)
+    values["RSI_CALL_MAX"] = _number(sig, "signals", "rsi_call_max", 50, 100, hi_open=True)
+    values["RSI_PUT_MIN"] = _number(sig, "signals", "rsi_put_min", 0, 50, hi_open=True)
+    if values["RSI_PUT_MIN"] >= values["RSI_CALL_MAX"]:
+        _fail("signals.rsi_put_min", "must be less than rsi_call_max", sig["rsi_put_min"])
     values["STALE_BAR_FACTOR"] = _number(sig, "signals", "stale_bar_factor", 1)
     values["MIN_BARS"] = _integer(sig, "signals", "min_bars",
                                   values["MACD_SLOW"] + values["MACD_SIGNAL"])
@@ -205,6 +211,9 @@ MACD_FAST: int = _VALUES["MACD_FAST"]  # type: ignore[assignment]
 MACD_SLOW: int = _VALUES["MACD_SLOW"]  # type: ignore[assignment]
 MACD_SIGNAL: int = _VALUES["MACD_SIGNAL"]  # type: ignore[assignment]
 ATR_EVENT_MULT: float = _VALUES["ATR_EVENT_MULT"]  # type: ignore[assignment]
+MACD_MIN_ATR_MULT: float = _VALUES["MACD_MIN_ATR_MULT"]  # type: ignore[assignment]
+RSI_CALL_MAX: float = _VALUES["RSI_CALL_MAX"]  # type: ignore[assignment]
+RSI_PUT_MIN: float = _VALUES["RSI_PUT_MIN"]  # type: ignore[assignment]
 STALE_BAR_FACTOR: float = _VALUES["STALE_BAR_FACTOR"]  # type: ignore[assignment]
 MIN_BARS: int = _VALUES["MIN_BARS"]  # type: ignore[assignment]
 MIN_DTE: int = _VALUES["MIN_DTE"]  # type: ignore[assignment]

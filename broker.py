@@ -395,3 +395,26 @@ def fetch_order_status(trading: Any, order_id: str) -> str | None:
     if status is None:
         return None
     return getattr(status, "value", str(status))
+
+
+def cancel_order(trading: Any, order_id: str) -> bool:
+    """Cancel an open order by ID. Returns True if accepted, False on any error.
+
+    Fire-and-forget for background use: a failed cancel is logged by the caller; never raises.
+    """
+    try:
+        trading.cancel_order_by_id(order_id)
+        return True
+    except Exception:
+        return False
+
+
+def cancel_order_raising(trading: Any, order_id: str) -> None:
+    """Cancel an open order by ID, raising BrokerError on failure.
+
+    Use this from interactive CLI commands where the caller wants to surface errors.
+    """
+    try:
+        trading.cancel_order_by_id(order_id)
+    except Exception as error:
+        raise BrokerError(str(error)) from None

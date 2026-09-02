@@ -37,6 +37,14 @@ from data_models import (
 
 JOURNAL_PATH = Path("logs") / "cycles.jsonl"
 MIN_OPTIONS_LEVEL = 3  # spreads need Alpaca options trading level 3
+FILL_POLL_TIMEOUT_SECONDS = 20.0
+FILL_POLL_INTERVAL_SECONDS = 2.0
+ENTRY_ORDER_CANCEL_TIMEOUT_SECONDS = 180.0  # cancel unfilled entry limit orders after 3 minutes
+POST_EXIT_COOLDOWN_SECONDS = 600.0  # 10 minute cooldown per symbol after a trade exit
+
+_RECENT_EXITS: dict[str, float] = {}  # symbol -> exit timestamp
+_FILLED = ("filled", "FILLED", "partially_filled")
+_DEAD = ("canceled", "CANCELED", "expired", "EXPIRED", "rejected", "REJECTED")
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 
@@ -217,6 +225,8 @@ def run_cycle(
                     entry["skipped"] = "no_quote"
                 else:
                     entry["receipt"] = _settle(trading, plan, execute)
+            if entry.get("receipt", {}).get("submitted"):
+                _RECENT_EXITS[spread.underlying] = time.monotonic()
             exits.append(entry)
             logger.info(
                 "exit {}: {}",
@@ -232,6 +242,7 @@ def run_cycle(
         for sym in account.open_order_symbols
         if pos_and_risk.parse_occ(sym) is not None
     }
+    now_ts = time.monotonic()
     candidates = []
     for c in signals.build_candidates(
         whitelist_features, clock.is_open, config.bar_seconds
@@ -239,6 +250,8 @@ def run_cycle(
         if c.gate_block is None and c.symbol in busy:
             # a held/pending underlying is not a candidate
             c = replace(c, gate_block="already_held")
+        elif c.gate_block is None and (now_ts - _RECENT_EXITS.get(c.symbol, 0.0) < POST_EXIT_COOLDOWN_SECONDS):
+            c = replace(c, gate_block="post_exit_cooldown")
         candidates.append(c)
     record["candidates"] = [
         {
@@ -285,6 +298,27 @@ def run_cycle(
         if submitted
         else ("planned" if not execute and (exits or record["entry"]) else "hold")
     )
+
+    # Rich hold reason — makes it easy to see exactly why no entry was taken
+    if record["outcome"] == "hold":
+        if not candidates:
+            record["hold_reason"] = "no_candidates"
+        elif not tradeable:
+            blocking = {c.gate_block for c in candidates if c.gate_block}
+            record["hold_reason"] = sorted(blocking)[0] if blocking else "all_gated"
+        elif choice is None:
+            from decision_layer import compute_quantitative_edge_score
+            has_quant_edge = any(
+                compute_quantitative_edge_score(c) >= 0.55 for c in tradeable
+            )
+            if not has_quant_edge:
+                record["hold_reason"] = "insufficient_quantitative_edge"
+            else:
+                record["hold_reason"] = "llm_pass"
+        else:
+            record["hold_reason"] = "entry_rejected_by_risk"
+        logger.info("hold_reason: {}", record["hold_reason"])
+
     append_journal(record)
     return record
 
@@ -533,6 +567,35 @@ def _new_orders(record: dict) -> dict[str, str]:
     return orders
 
 
+def _cancel_stale_entry_orders(
+    trading: object, pending: dict[str, str], order_timestamps: dict[str, float]
+) -> None:
+    """Cancel any pending entry limit orders that have been open longer than the timeout.
+
+    Eliminates fill latency: a signal at T0 should not result in a fill at T+10 min
+    when the market has already moved on.  Exit orders are never cancelled here.
+    """
+    now = time.monotonic()
+    for order_id, label in list(pending.items()):
+        if not label.startswith("entry "):
+            continue
+        submitted_at = order_timestamps.get(order_id, now)
+        age = now - submitted_at
+        if age >= ENTRY_ORDER_CANCEL_TIMEOUT_SECONDS:
+            ok = broker.cancel_order(trading, order_id)
+            if ok:
+                logger.info(
+                    "CANCELLED stale entry order (age={:.0f}s): {} (order {})",
+                    age, label, order_id,
+                )
+                del pending[order_id]
+                order_timestamps.pop(order_id, None)
+            else:
+                logger.warning(
+                    "failed to cancel stale entry order: {} (order {})", label, order_id
+                )
+
+
 def _check_fills(trading: object, pending: dict[str, str]) -> None:
     """Resolve pending orders in place; sound + log on a fill. Notification only, never raises."""
     for order_id, label in list(pending.items()):
@@ -547,6 +610,7 @@ def _check_fills(trading: object, pending: dict[str, str]) -> None:
         # None (lookup failed) or still open: keep waiting
     if pending:
         logger.info("awaiting fill: {}", ", ".join(pending.values()))
+
 
 
 @app.command()
@@ -570,13 +634,20 @@ def run(
     # Seed fill tracking from orders already open at the broker, so a restart
     # resumes watching what a previous run submitted.
     pending: dict[str, str] = {}  # order_id -> label
+    order_timestamps: dict[str, float] = {}  # order_id -> time.monotonic() at submission
     try:
         pending = broker.fetch_open_orders(trading)
+        seed_ts = time.monotonic()
+        for oid in pending:
+            order_timestamps[oid] = seed_ts
     except broker.BrokerError as error:
         logger.warning("could not list open orders at startup: {}", error)
     if pending:
         logger.info("watching open orders for fills: {}", ", ".join(pending.values()))
     while True:
+        # Cancel entry orders stale beyond the timeout before running a new bar
+        if execute:
+            _cancel_stale_entry_orders(trading, pending, order_timestamps)
         record = run_cycle(
             config,
             trading,
@@ -587,6 +658,10 @@ def run(
         )
         logger.info("cycle {} outcome: {}", record["cycle_id"], record.get("outcome"))
         new = _new_orders(record)
+        # Stamp submission time for every brand-new order
+        now_ts = time.monotonic()
+        for oid in new:
+            order_timestamps[oid] = now_ts
         pending.update(new)
         if new:
             # Short poll for instant fill feedback, timeboxed so an old
@@ -712,7 +787,7 @@ def cancel(
     failed = False
     for oid, label in targets.items():
         try:
-            broker.cancel_order(trading, oid)
+            broker.cancel_order_raising(trading, oid)
             typer.echo(f"cancel requested: {oid}  {label}")
         except broker.BrokerError as error:
             failed = True

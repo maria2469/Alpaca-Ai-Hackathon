@@ -61,6 +61,8 @@ def event_frame(prev: dict, last: dict) -> pd.DataFrame:
     df = frame([prev, last])
     df["atr"] = [prev.get("atr", 1.0), last.get("atr", 1.0)]
     df["macd_hist"] = [prev.get("macd_hist", 1.0), last.get("macd_hist", 1.0)]
+    # Ensure RSI is set for testing RSI gates
+    df["rsi"] = [prev.get("rsi", 50.0), last.get("rsi", 50.0)]
     return df
 
 
@@ -88,11 +90,16 @@ def test_macd_cross_events():
     prev = ohlc(100, 100.5, 99.5, 100.0)
     last = ohlc(100, 100.5, 99.5, 100.0)
     df = event_frame(prev, last)
+    # Set ATR to 1.0, so threshold is 0.05. macd_hist of 0.5 exceeds threshold.
+    df["atr"] = [1.0, 1.0]
     df["macd_hist"] = [-0.5, 0.5]
     assert [e.kind for e in signals.detect_events(df)] == ["macd_cross_up"]
     df["macd_hist"] = [0.5, -0.5]
     assert [e.kind for e in signals.detect_events(df)] == ["macd_cross_down"]
     df["macd_hist"] = [0.5, 0.7]  # same sign: no cross
+    assert signals.detect_events(df) == ()
+    # Below threshold: should not fire
+    df["macd_hist"] = [-0.01, 0.01]  # 0.01 < 0.05 threshold
     assert signals.detect_events(df) == ()
 
 
@@ -108,6 +115,26 @@ def test_gap_and_breakout_can_fire_together_in_fixed_order():
     prev = ohlc(100, 100.5, 99.5, 100.0)
     both = signals.detect_events(event_frame(prev, ohlc(103.0, 106.5, 102.5, 106.0)))
     assert [e.kind for e in both] == ["gap_up", "breakout_up"]
+
+
+def test_rsi_exhaustion_gates():
+    import settings
+    prev = ohlc(100, 100.5, 99.5, 100.0)
+    # CALL blocked at RSI >= 70
+    overbought = event_frame(prev, ohlc(103.0, 106.5, 102.5, 106.0))
+    overbought["rsi"] = [50.0, 75.0]  # above RSI_CALL_MAX (70.0)
+    events = signals.detect_events(overbought)
+    assert [e.kind for e in events] == []  # no events due to RSI gate
+    # PUT blocked at RSI <= 30
+    oversold = event_frame(prev, ohlc(97.0, 98.5, 96.5, 97.0))
+    oversold["rsi"] = [50.0, 25.0]  # below RSI_PUT_MIN (30.0)
+    events = signals.detect_events(oversold)
+    assert [e.kind for e in events] == []  # no events due to RSI gate
+    # Normal RSI allows events
+    normal = event_frame(prev, ohlc(103.0, 106.5, 102.5, 106.0))
+    normal["rsi"] = [50.0, 55.0]  # within safe range
+    events = signals.detect_events(normal)
+    assert [e.kind for e in events] == ["gap_up", "breakout_up"]
 
 
 # --- build_signal + gates ---

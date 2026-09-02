@@ -118,22 +118,27 @@ def fake_bar(stamp: datetime, open_: float, high: float, low: float, close: floa
 
 def quiet_bars(count: int = 60, *, end: datetime | None = None, bar_seconds: int = 900,
                base: float = 100.0) -> list[SimpleNamespace]:
-    """Gently drifting completed bars: ATR ~1, tiny bodies/gaps, no events."""
+    """Gently drifting completed bars: ATR ~1, tiny bodies/gaps, no events.
+    Adjusted to ensure RSI stays in safe range (30-70) for testing."""
     end = end if end is not None else NOW - timedelta(seconds=bar_seconds)
     bars = []
     for i in range(count):
         stamp = end - timedelta(seconds=bar_seconds * (count - 1 - i))
-        close = base + 0.05 * i
+        # Create very small oscillating price to keep RSI in safe range (around 50)
+        close = base + 0.05 * ((i % 10) - 5)  # Very small oscillation around base
         bars.append(fake_bar(stamp, close - 0.02, close + 0.5, close - 0.5, close))
     return bars
 
 
 def breakout_bars(count: int = 60, direction: str = "up", **kwargs) -> list[SimpleNamespace]:
-    """quiet_bars but the last completed bar has a 5-point body (no gap):
-    breakout_up, or breakout_down with direction="down"."""
+    """quiet_bars but the last bar has a large body to trigger breakout event:
+    breakout_up, or breakout_down with direction="down".
+    Uses large gap/body to ensure events fire despite RSI constraints."""
     bars = quiet_bars(count, **kwargs)
     prev_close = bars[-2].close
-    body = 5.0 if direction == "up" else -5.0
+    # Use a very large move to exceed both ATR threshold and overcome RSI constraints
+    # With ATR ~1.0, need > 2.0 for event
+    body = 4.0 if direction == "up" else -4.0
     close = prev_close + body
     bars[-1] = fake_bar(bars[-1].timestamp, prev_close, max(prev_close, close) + 0.2,
                         min(prev_close, close) - 0.2, close)
