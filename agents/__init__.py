@@ -6,6 +6,8 @@ from agents.regime_agent import RegimeAgent
 from agents.decision_agent import DecisionAgent
 from agents.risk_gate import RiskGateAgent
 from agents.execution_agent import ExecutionAgent
+from agents.position_manager import PositionManagerAgent
+from agents.trade_memory import TradeMemoryAgent
 
 __all__ = [
     "BaseAgent",
@@ -16,4 +18,6 @@ __all__ = [
     "DecisionAgent",
     "RiskGateAgent",
     "ExecutionAgent",
+    "PositionManagerAgent",
+    "TradeMemoryAgent",
 ]

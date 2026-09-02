@@ -21,8 +21,7 @@ from data_models import EntryChoice, SymbolFeatures
 
 # Google Gemini API endpoint
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
-TIMEOUT_SECONDS = 10.0
-# Model choice lives in settings.yaml (llm section).
+TIMEOUT_SECONDS = 30.0
 
 SYSTEM_PROMPT = """You are the entry-signal module of an institutional multi-agent trading system that buys
 debit vertical spreads on liquid US options. Every candidate underlying has fired
@@ -54,30 +53,64 @@ def call_gemini(
     transport: httpx.BaseTransport | None = None,
 ) -> tuple[str, str]:
     """POST to Google Gemini API; returns (content, model_used). Raises LlmError."""
-    raw_model = getattr(settings, "PRIMARY_MODEL", "gemini-1.5-flash")
-    # Clean up model name for Gemini API
-    model_name = "gemini-1.5-flash" if "gemini" in raw_model.lower() and "flash" in raw_model.lower() else raw_model
+    raw_model = getattr(settings, "PRIMARY_MODEL", "gemini-2.5-flash")
+    model_name = "gemini-2.5-flash" if "gemini" in raw_model.lower() else raw_model
 
-    # Try OpenAI-compatible endpoint first, then native generateContent
-    openai_url = f"{GEMINI_API_BASE}/openai/chat/completions"
-    payload = {
-        "model": model_name,
-        "messages": messages,
-        "response_format": {"type": "json_object"},
+    contents = []
+    system_instruction = None
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content", "")
+        if role == "system":
+            system_instruction = {"parts": [{"text": content}]}
+        else:
+            g_role = "user" if role == "user" else "model"
+            contents.append({"role": g_role, "parts": [{"text": content}]})
+
+    native_url = f"{GEMINI_API_BASE}/models/{model_name}:generateContent?key={api_key}"
+    payload: dict = {
+        "contents": contents,
+        "generationConfig": {"responseMimeType": "application/json"},
     }
+    if system_instruction:
+        payload["systemInstruction"] = system_instruction
+
     try:
         with httpx.Client(timeout=TIMEOUT_SECONDS, transport=transport) as client:
+            # 1. Try OpenAI-compatible endpoint first
+            openai_url = f"{GEMINI_API_BASE}/openai/chat/completions"
+            oai_payload = {
+                "model": model_name,
+                "messages": messages,
+                "response_format": {"type": "json_object"},
+            }
             response = client.post(
                 openai_url,
-                json=payload,
+                json=oai_payload,
                 headers={"Authorization": f"Bearer {api_key}"},
             )
             if response.status_code == 200:
                 body = response.json()
-                content = body["choices"][0]["message"]["content"]
-                model_used = body.get("model", model_name)
-                if isinstance(content, str) and isinstance(model_used, str):
-                    return content, model_used
+                if "choices" in body:
+                    content = body["choices"][0]["message"]["content"]
+                    model_used = body.get("model", model_name)
+                    if isinstance(content, str) and isinstance(model_used, str):
+                        return content, model_used
+
+            # 2. Fallback to native generateContent endpoint
+            response = client.post(native_url, json=payload)
+            if response.status_code == 200:
+                body = response.json()
+                candidates = body.get("candidates", [])
+                if candidates and isinstance(candidates, list):
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts and "text" in parts[0]:
+                        return parts[0]["text"], model_name
+                if "choices" in body:
+                    content = body["choices"][0]["message"]["content"]
+                    model_used = body.get("model", model_name)
+                    if isinstance(content, str) and isinstance(model_used, str):
+                        return content, model_used
     except Exception as error:
         raise LlmError(f"gemini request failed: {type(error).__name__}") from None
 

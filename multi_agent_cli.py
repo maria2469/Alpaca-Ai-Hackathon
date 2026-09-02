@@ -16,6 +16,8 @@ from agents import (
     DecisionAgent,
     RiskGateAgent,
     ExecutionAgent,
+    PositionManagerAgent,
+    TradeMemoryAgent,
     performance_monitor
 )
 
@@ -38,8 +40,10 @@ def create_agents() -> dict:
         "market_scanner": MarketScannerAgent(timeout=3.0),
         "regime_agent": RegimeAgent(timeout=1.5),
         "decision_agent": DecisionAgent(timeout=4.0),
-        "risk_gate": RiskGateAgent(timeout=1.0),
+        "risk_gate": RiskGateAgent(timeout=3.0),
         "execution_agent": ExecutionAgent(timeout=1.0),
+        "position_manager": PositionManagerAgent(timeout=3.0),
+        "trade_memory": TradeMemoryAgent(timeout=2.0),
     }
 
 
