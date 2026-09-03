@@ -1,0 +1,1011 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PACA · Case Study</title>
+<meta name="description" content="PACA, a position-aware agentic capital allocator: how a stock momentum trader with no options experience built an AI agent that trades vertical spreads on Alpaca paper, and what three trading days taught it.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦙</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<script>
+  // Theme: a saved choice wins; otherwise follow the OS. Runs before paint to avoid a flash.
+  (function () {
+    const q = new URLSearchParams(location.search);
+    if (q.get("review") === "1") document.documentElement.classList.add("review");
+    let saved = null;
+    try { saved = localStorage.getItem("paca-theme"); } catch (e) {}
+    const forced = q.get("theme");
+    const system = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    document.documentElement.dataset.theme = forced === "dark" || forced === "light" ? forced : (saved === "dark" || saved === "light" ? saved : system);
+  })();
+</script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+img { max-width: 100%; }
+
+:root {
+  color-scheme: light;
+  --page:        #f9f9f7;
+  --surface:     #fcfcfb;
+  --ink:         #0b0b0b;
+  --ink-2:       #52514e;
+  --muted:       #898781;
+  --grid:        #e1e0d9;
+  --baseline:    #c3c2b7;
+  --border:      rgba(11,11,11,0.10);
+  --accent:      #2a78d6;
+  --accent-soft: #cde2fb;
+  --series-2:    #eb6834;
+  --series-3:    #1baf7a;
+  --div-pos:     #2a78d6;
+  --div-neg:     #e34948;
+  --div-mid:     #f0efec;
+  --good:        #0ca30c;
+  --good-text:   #006300;
+  --warning:     #fab219;
+  --critical:    #d03b3b;
+  --chip:        #f0efec;
+  --llm:         #fff3e6;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page:        #0d0d0d;
+  --surface:     #1a1a19;
+  --ink:         #ffffff;
+  --ink-2:       #c3c2b7;
+  --muted:       #898781;
+  --grid:        #2c2c2a;
+  --baseline:    #383835;
+  --border:      rgba(255,255,255,0.10);
+  --accent:      #3987e5;
+  --accent-soft: #10315c;
+  --series-2:    #d95926;
+  --series-3:    #199e70;
+  --div-pos:     #3987e5;
+  --div-neg:     #e66767;
+  --div-mid:     #383835;
+  --good-text:   #0ca30c;
+  --chip:        #2c2c2a;
+  --llm:         #2e2113;
+}
+
+html { scroll-snap-type: y proximity; overflow-x: clip; }
+.inner > *, .cols > *, .cols > * > * { min-width: 0; }
+.eyebrow { flex-wrap: wrap; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+body {
+  background: var(--page);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+}
+.mono, code, .eyebrow, .num { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+.num { font-variant-numeric: tabular-nums; }
+h1, h2, .display { font-family: "Fraunces", Georgia, "Times New Roman", serif; font-weight: 500; letter-spacing: -0.015em; text-wrap: balance; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- top bar ---------- */
+.bar {
+  position: fixed; inset: 0 0 auto 0; z-index: 20;
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 10px 24px;
+  background: color-mix(in oklab, var(--page) 86%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase;
+}
+.bar .brand { font-weight: 600; color: var(--ink); text-decoration: none; }
+.bar .brand .tail { color: var(--muted); font-weight: 400; }
+.bar .links { display: flex; gap: 14px; margin-left: auto; }
+.bar .links a { color: var(--ink-2); text-decoration: none; }
+.bar .links a:hover { color: var(--accent); }
+.pill {
+  font: inherit; cursor: pointer; color: var(--ink-2);
+  padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface);
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.pill:hover { color: var(--ink); border-color: var(--ink-2); }
+.pill .when-dark { display: none; }
+:root[data-theme="dark"] .pill .when-light { display: none; }
+:root[data-theme="dark"] .pill .when-dark { display: inline; }
+.counter { color: var(--muted); min-width: 64px; text-align: right; }
+
+/* ---------- slides ---------- */
+.slide {
+  min-height: 100vh; min-height: 100dvh;
+  scroll-snap-align: start;
+  padding: 84px 6vw 56px;
+  display: flex; flex-direction: column; justify-content: center;
+  border-bottom: 1px solid var(--grid);
+  position: relative;
+}
+.slide > .inner { width: 100%; max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+.eyebrow { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); display: flex; gap: 10px; align-items: center; }
+.eyebrow .n { color: var(--accent); font-weight: 600; }
+h1 { font-size: clamp(34px, 5vw, 60px); line-height: 1.05; }
+h2 { font-size: clamp(28px, 3.6vw, 44px); line-height: 1.1; }
+.lede { font-size: clamp(16px, 1.35vw, 19px); color: var(--ink-2); max-width: 62ch; }
+.lede b, p b { color: var(--ink); font-weight: 600; }
+p { max-width: 65ch; }
+.source { margin-top: auto; padding-top: 18px; font-size: 11px; color: var(--muted); font-family: "IBM Plex Mono", ui-monospace, monospace; letter-spacing: 0.02em; }
+.source code { color: var(--ink-2); }
+
+.cols { display: grid; gap: 28px; align-items: start; }
+.cols.c2 { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
+.cols.c2r { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
+.cols.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.cols.eq { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+.card h3 { font-size: 13px; font-family: "IBM Plex Mono", ui-monospace, monospace; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 10px; }
+.card.llm { background: var(--llm); border-color: color-mix(in oklab, var(--series-2) 45%, transparent); }
+.card ul { padding-left: 18px; display: grid; gap: 6px; }
+.card li::marker { color: var(--muted); }
+.quote { font-family: "Fraunces", Georgia, serif; font-size: clamp(17px, 1.5vw, 21px); line-height: 1.4; color: var(--ink); }
+.quote + .cite { font-size: 11.5px; color: var(--muted); margin-top: 8px; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+
+/* stat tiles */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.tile .label { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.tile .value { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: clamp(20px, 1.9vw, 27px); font-weight: 600; margin-top: 4px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+#tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.tile .sub { font-size: 12px; color: var(--ink-2); margin-top: 4px; }
+.pos { color: var(--good-text); } .neg { color: var(--critical); }
+
+/* hero */
+.hero .big { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: clamp(48px, 7vw, 92px); font-weight: 600; line-height: 1; letter-spacing: -0.03em; }
+.hero .big small { display: block; font-size: 0.3em; color: var(--muted); font-weight: 500; letter-spacing: 0; margin-top: 6px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-size: 13.5px; }
+.kv dt { color: var(--muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; letter-spacing: 0.04em; text-transform: uppercase; padding-top: 3px; }
+.kv dd { color: var(--ink); }
+
+.chart { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px; min-height: 340px; }
+.chart .plot { width: 100%; height: 420px; }
+.chart.tall .plot { height: 520px; }
+.chart .cap { font-size: 12px; color: var(--ink-2); padding: 6px 8px 4px; }
+
+/* css bars */
+.bars { display: grid; gap: 7px; }
+.bar-row { display: grid; grid-template-columns: minmax(110px, 160px) 1fr max-content; align-items: center; gap: 10px; font-size: 12.5px; }
+.bar-row .lab { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-row .track { height: 14px; position: relative; background: transparent; }
+.bar-row .fill { position: absolute; top: 0; bottom: 0; left: 0; background: var(--accent); border-radius: 0 4px 4px 0; min-width: 2px; }
+.bar-row .fill.dim { background: var(--baseline); }
+.bar-row .fill.good { background: var(--good); }
+.bar-row .fill.bad { background: var(--critical); }
+.bar-row .val { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--ink); min-width: 56px; text-align: right; }
+.diverge .track { border-left: none; }
+.diverge .track::before { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--baseline); }
+.diverge .fill { border-radius: 4px; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+
+/* funnel */
+.funnel { display: grid; gap: 8px; }
+.stage { display: grid; grid-template-columns: 1fr max-content; align-items: center; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; }
+.stage .name { font-size: 13.5px; }
+.stage .n { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stage .keep { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; color: var(--muted); }
+.stage.human { border-color: color-mix(in oklab, var(--series-2) 55%, transparent); background: var(--llm); }
+.stage.final { border-color: var(--accent); }
+.arrow { text-align: center; color: var(--muted); font-size: 12px; line-height: 1; margin: -4px 0; }
+
+/* pipeline strip */
+.strip { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
+.step { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; position: relative; font-size: 12.5px; }
+.step .k { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); font-weight: 600; margin-bottom: 6px; }
+.step b { display: block; font-size: 13.5px; margin-bottom: 4px; color: var(--ink); }
+.step .v { color: var(--ink-2); }
+.step.llm { background: var(--llm); border-color: color-mix(in oklab, var(--series-2) 55%, transparent); }
+.step.llm .k { color: var(--series-2); }
+
+/* code */
+pre { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; font-size: 12.5px; line-height: 1.5; overflow-x: auto; }
+pre .c { color: var(--muted); }
+pre .k { color: var(--accent); }
+pre .s { color: var(--series-3); }
+pre .h { color: var(--series-2); }
+
+/* timeline */
+.timeline { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; overflow-x: auto; padding-bottom: 6px; position: relative; }
+.timeline::before { content: ""; position: absolute; left: 0; right: 0; top: 34px; height: 1px; background: var(--baseline); }
+.tcard { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 12px; font-size: 12px; line-height: 1.45; position: relative; margin-top: 22px; }
+.tcard::before { content: ""; position: absolute; top: -17px; left: 14px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); border: 2px solid var(--page); }
+.tcard .when { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.tcard b { display: block; font-size: 13px; margin: 4px 0 6px; }
+.tcard .ev { color: var(--ink-2); }
+.tcard.fix::before { background: var(--series-2); }
+.tcard.rule::before { background: var(--series-3); }
+.callout { border-left: 3px solid var(--series-2); padding: 12px 16px; background: var(--llm); border-radius: 0 10px 10px 0; }
+.callout b { color: var(--ink); }
+
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+th { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+td.v { font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600; white-space: nowrap; }
+.tag { display: inline-block; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 8px; border-radius: 999px; background: var(--chip); color: var(--ink-2); }
+.tag.met { background: color-mix(in oklab, var(--good) 18%, transparent); color: var(--good-text); }
+.tag.part { background: color-mix(in oklab, var(--warning) 28%, transparent); color: var(--ink); }
+.tag.na { background: var(--chip); }
+
+/* diagram */
+.diagram svg { width: 100%; height: auto; display: block; }
+.diagram text { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+.diagram .box { fill: var(--surface); stroke: var(--baseline); stroke-width: 1; rx: 8; }
+.diagram .box.ext { fill: var(--chip); stroke-dasharray: 4 3; }
+.diagram .box.llm { fill: var(--llm); stroke: var(--series-2); }
+.diagram .box.pure { stroke: var(--accent); }
+.diagram .t { fill: var(--ink); font-size: 12.5px; font-weight: 600; }
+.diagram .s { fill: var(--ink-2); font-size: 10.5px; }
+.diagram .l { fill: var(--muted); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }
+.diagram .e { stroke: var(--ink-2); stroke-width: 1.3; fill: none; marker-end: url(#ah); }
+.diagram .e.dash { stroke-dasharray: 4 3; stroke: var(--muted); }
+.diagram .ah { fill: var(--ink-2); }
+
+/* dashboard link cards */
+.linkcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.linkcard { display: block; text-decoration: none; color: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.linkcard:hover { border-color: var(--accent); }
+.linkcard .k { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+.linkcard b { display: block; font-size: 15px; margin: 4px 0; }
+.linkcard span { font-size: 12.5px; color: var(--ink-2); }
+.live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 6px; vertical-align: 1px; }
+
+/* tooltip */
+.tip { position: fixed; z-index: 30; pointer-events: none; background: var(--ink); color: var(--page); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; padding: 6px 9px; border-radius: 6px; opacity: 0; transform: translate(-50%, -120%); transition: opacity .08s; white-space: nowrap; }
+.tip.on { opacity: 1; }
+
+.next-hint { position: fixed; right: 22px; bottom: 18px; z-index: 20; display: flex; gap: 6px; }
+.next-hint button { font: inherit; cursor: pointer; width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--ink-2); font-size: 15px; }
+.next-hint button:hover { color: var(--ink); border-color: var(--ink-2); }
+
+/* ?review=1 pins every slide to 900px so a single tall screenshot shows the whole deck */
+html.review { scroll-snap-type: none; }
+html.review .slide { min-height: 900px; height: 900px; overflow: hidden; }
+html.review.only .slide:not(.only) { display: none; }
+
+@media (max-width: 900px) {
+  .bar { font-size: 10.5px; gap: 10px; padding: 8px 14px; }
+  .bar .links { gap: 10px; }
+  .slide { padding: 92px 5vw 48px; }
+  .cols.c2, .cols.c2r, .cols.c3, .cols.eq { grid-template-columns: minmax(0, 1fr); }
+  .hero .big { font-size: clamp(40px, 12vw, 64px); }
+  .slide { padding-left: 16px; padding-right: 16px; }
+  .strip { grid-auto-flow: row; grid-auto-columns: auto; }
+  .chart .plot, .chart.tall .plot { height: 360px; }
+  .timeline { grid-auto-columns: minmax(230px, 1fr); }
+  .bar-row { grid-template-columns: minmax(90px, 120px) 1fr max-content; }
+  #tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .timeline { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(230px, 1fr); }
+}
+</style>
+</head>
+<body>
+
+<nav class="bar" aria-label="Deck navigation">
+  <a class="brand" href="#s1">PACA <span class="tail">· case study</span></a>
+  <div class="links">
+    <a href="https://alpaca-hackathon-2026-artifacts-paca-cycles.surge.sh">cycle monitor</a>
+    <a href="https://alpaca-hackathon-2026-artifacts-paca-candles.surge.sh">candles</a>
+    <a id="repoLink" href="https://github.com/maria2469/Alpaca-Ai-Hackathon">repo</a>
+  </div>
+  <button class="pill" id="themeToggle" type="button" aria-label="Toggle light or dark theme"><span class="when-light">☾ dark</span><span class="when-dark">☼ light</span></button>
+  <span class="counter mono" id="counter">01 / 14</span>
+</nav>
+<div class="next-hint" aria-hidden="true"><button id="prevBtn" title="Previous slide (↑)">↑</button><button id="nextBtn" title="Next slide (↓)">↓</button></div>
+<div class="tip" id="tip"></div>
+
+<main id="deck">
+
+<!-- 1 · Hook -->
+<section class="slide hero" id="s1">
+  <div class="inner">
+    <div class="eyebrow"><span class="n">01</span> PACA · Position-aware Agentic Capital Allocator · Alpaca AI Trading Agents Hackathon, Aug 28 – Sep 4 2026</div>
+    <div class="cols c2">
+      <div style="display:grid; gap:18px">
+        <h1>One trade, start to finish.</h1>
+        <div class="big pos" id="heroPnl">—</div>
+        <p class="lede" id="heroLede">Loading the trade…</p>
+        <dl class="kv" id="heroKv"></dl>
+      </div>
+      <div class="chart tall">
+        <div class="plot" id="heroChart"></div>
+        <div class="cap">NVDA, 5-minute bars, regular hours. Shaded band = the spread's strikes while held. ▲ entry, ✕ exit. Lower pane: RSI-14 with the 70 / 30 exhaustion lines the entry gate uses.</div>
+      </div>
+    </div>
+    <div class="source">Paper account on Alpaca. Fills from <code>pnl.py realized</code>; bars from the IEX feed via <code>export_candles.py</code>; exit reason from the cycle journal. Every number on this deck is rendered from <code>deck-data.json</code>, exported at deploy time.</div>
+  </div>
+</section>
+
+<!-- 2 · Scoreboard -->
+<section class="slide" id="s2">
+  <div class="inner">
+    <div class="eyebrow"><span class="n">02</span> Scoreboard · <span id="sbWindow">—</span></div>
+    <h2>Three trading days on paper.</h2>
+    <div class="tiles" id="tiles"></div>
+    <div class="cols eq">
+      <div class="card">
+        <h3>Realized P&amp;L by exit day</h3>
+        <div class="bars diverge" id="pnlByDay"></div>
+      </div>
+      <div class="card">
+        <h3>Every closed spread</h3>
+        <div class="bars diverge" id="pnlByTrade"></div>
+      </div>
+    </div>
+    <p class="lede" id="sbNote">Seven trades is a small sample. The result comes from the payoff ratio, not the win rate: two winners were let run overnight, five losers were cut by the reversal exit inside a day.</p>
+    <div class="source">Equity from <code>cli.py account --export</code>; round trips from <code>pnl.py realized</code> (FIFO-matched fills, the P&amp;L authority; the journal is never used for P&amp;L).</div>
+  </div>
+</section>
+
+<!-- 3 · Why -->
+<section class="slide" id="s3">
+  <div class="inner">
+    <div class="eyebrow"><span class="n">03</span> Objectives and constraints</div>
+    <h2>Built by a stock momentum trader who had never traded an option.</h2>
+    <div class="cols c3">
+      <div class="card">
+        <h3>The operator</h3>
+        <ul>
+          <li>Trades stocks on momentum: gaps, breakouts, MACD turns on intraday bars.</li>
+          <li>No options experience. Greeks, assignment, pin risk: all new.</li>
+          <li>Limited screen time. The agent has to run itself and explain itself.</li>
+          <li>One week to build, three trading days to prove it.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>The instrument: debit verticals</h3>
+        <ul>
+          <li><b>Max loss is the debit.</b> Risk is known at entry, so sizing is one division.</li>
+          <li>Directional, like a stock trade, but capital-efficient: a $946 spread carried an $1,100 move in NVDA.</li>
+          <li>Defined width caps the upside, which makes a mechanical take-profit possible.</li>
+          <li>Both legs same expiry and type: no naked short, no early-assignment surprise on the debit side.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>The objectives</h3>
+        <ul>
+          <li><b>Paper only.</b> Startup aborts if the environment points anywhere but paper.</li>
+          <li>Small and reviewable: ten flat Python modules, every strategy number in one YAML file.</li>
+          <li>The AI decides <b>direction only</b>. Strikes, expiry, size, price and every exit are deterministic code.</li>
+          <li>When uncertain, no order. Passing is always acceptable.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="source">Project rules in <code>CLAUDE.md</code>; methodology approved 2026-08-31, revised 2026-09-02 and 2026-09-03 (<code>README.md</code>).</div>
+  </div>
+</section>
+
+<!-- 4 · Diagram -->
+<section class="slide" id="s4">
+  <div class="inner">
+    <div class="eyebrow"><span class="n">04</span> System overview · one five-minute cycle</div>
+    <h2>Exits first, then one directional decision, then code takes over.</h2>
+    <div class="diagram card" id="diagram">
+      <svg viewBox="0 0 1200 450" role="img" aria-label="PACA architecture: Alpaca data feeds market_data and signals; the decision layer picks a symbol and direction; options_screener, pos_and_risk and broker turn it into a sized paper order; pos_and_risk exits run before entries; the journal feeds dashboards and the trading review.">
+        <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="ah"/></marker></defs>
+        <text x="20" y="28" class="l">every cycle · 5m · exits before entries</text>
+        <!-- row 1: data -->
+        <rect x="20" y="50" width="150" height="66" class="box ext"/>
+        <text x="95" y="78" text-anchor="middle" class="t">Alpaca</text>
+        <text x="95" y="96" text-anchor="middle" class="s">IEX 5m bars · quotes · clock</text>
+        <rect x="220" y="50" width="150" height="66" class="box pure"/>
+        <text x="295" y="78" text-anchor="middle" class="t">market_data</text>
+        <text x="295" y="96" text-anchor="middle" class="s">150 completed bars</text>
+        <rect x="420" y="50" width="150" height="66" class="box pure"/>
+        <text x="495" y="78" text-anchor="middle" class="t">signals</text>
+        <text x="495" y="96" text-anchor="middle" class="s">RSI · ATR · MACD · gates</text>
+        <rect x="620" y="50" width="170" height="66" class="box llm"/>
+        <text x="705" y="78" text-anchor="middle" class="t">decision_layer</text>
+        <text x="705" y="96" text-anchor="middle" class="s">picks symbol + direction</text>
+        <rect x="840" y="50" width="150" height="66" class="box pure"/>
+        <text x="915" y="78" text-anchor="middle" class="t">options_screener</text>
+        <text x="915" y="96" text-anchor="middle" class="s">expiry · strikes · rank</text>
+        <rect x="1030" y="50" width="150" height="66" class="box pure"/>
+        <text x="1105" y="78" text-anchor="middle" class="t">pos_and_risk</text>
+        <text x="1105" y="96" text-anchor="middle" class="s">size: 4 caps, min room</text>
+        <path d="M170 83H218" class="e"/><path d="M370 83H418" class="e"/><path d="M570 83H618" class="e"/><path d="M790 83H838" class="e"/><path d="M990 83H1028" class="e"/>
+        <!-- row 2: broker -->
+        <rect x="840" y="180" width="340" height="66" class="box"/>
+        <text x="1010" y="208" text-anchor="middle" class="t">broker · submit_paper_order</text>
+        <text x="1010" y="226" text-anchor="middle" class="s">fresh re-check · paper guards · unique order id · mleg day limit</text>
+        <path d="M1105 116V178" class="e"/>
+        <rect x="620" y="180" width="170" height="66" class="box pure"/>
+        <text x="705" y="208" text-anchor="middle" class="t">pos_and_risk · exits</text>
+        <text x="705" y="226" text-anchor="middle" class="s">expiry → reversal → stop → TP</text>
+        <path d="M790 213H838" class="e"/>
+        <path d="M495 116V213H618" class="e"/>
+        <text x="520" y="160" class="l">events also drive exits</text>
+        <rect x="20" y="180" width="150" height="66" class="box ext"/>
+        <text x="95" y="208" text-anchor="middle" class="t">Alpaca paper</text>
+        <text x="95" y="226" text-anchor="middle" class="s">account · positions · orders</text>
+        <path d="M1010 246V268H95V248" class="e"/>
+        <text x="540" y="263" class="l">order receipts · positions read back next cycle</text>
+        <!-- row 3: journal -->
+        <rect x="220" y="324" width="400" height="66" class="box"/>
+        <text x="420" y="352" text-anchor="middle" class="t">logs/cycles.jsonl · one JSON line per cycle</text>
+        <text x="420" y="370" text-anchor="middle" class="s">every candidate, gate, veto, decision, receipt</text>
+        <path d="M420 300V322" class="e dash"/>
+        <path d="M420 300H1010V246" class="e dash" style="marker-end:none"/>
+        <text x="440" y="296" class="l">cli.run_cycle appends the record</text>
+        <rect x="670" y="324" width="200" height="66" class="box"/>
+        <text x="770" y="352" text-anchor="middle" class="t">dashboards</text>
+        <text x="770" y="370" text-anchor="middle" class="s">surge.sh · redeployed each cycle</text>
+        <rect x="920" y="324" width="260" height="66" class="box"/>
+        <text x="1050" y="352" text-anchor="middle" class="t">/trading-review</text>
+        <text x="1050" y="370" text-anchor="middle" class="s">after the close · grades entries and passes</text>
+        <path d="M620 357H668" class="e dash"/>
+        <path d="M420 390V412H1050V392" class="e dash"/>
+        <text x="20" y="436" class="l">■ blue outline = pure functions over dataclasses, no network · ■ orange = the only non-deterministic box · dashed = read-only / after the fact</text>
+      </svg>
+    </div>
+    <div class="cols c3" style="gap:12px">
+      <div class="card"><h3>Ten flat modules</h3><p style="font-size:13px">settings · data_models · market_data · signals · options_screener · pos_and_risk · decision_layer · broker · cli · pnl. One orchestrator, <code>cli.run_cycle</code>. Only <code>broker.py</code> touches the environment or Alpaca.</p></div>
+      <div class="card"><h3>One number file</h3><p style="font-size:13px">Every threshold lives in <code>settings.yaml</code>, validated key-by-key at import. A typo'd key or an impossible combination stops every command before it can trade.</p></div>
+      <div class="card"><h3>One way out</h3><p style="font-size:13px">A single function submits orders. It re-validates the plan (two legs, ratio 1, day limit, paper) and is the only path from a decision to the broker. Dry run is the default; <code>--execute</code> arms it.</p></div>
+    </div>
+    <div class="source">Mirrors the architecture section of <code>README.md</code>; module names are the real file names.</div>
+  </div>
+</section>
+
+<!-- 5 · Signals -->
+<section class="slide" id="s5">
+  <div class="inner">
+    <div class="eyebrow"><span class="n">05</span> Component · entry signals</div>
+    <h2>Momentum events on completed 5-minute bars, then a wall of gates.</h2>
+    <div class="cols c2">
+      <div style="display:grid; gap:12px">
+        <div class="card">
+          <h3>Events (previous-bar ATR as the yardstick)</h3>
+          <ul>
+            <li><b>gap_up / gap_down</b>: open jumps more than <span class="num" data-cfg="signals.atr_event_mult"></span> × ATR from the prior close.</li>
+            <li><b>breakout_up / breakout_down</b>: a single bar's body exceeds <span class="num" data-cfg="signals.atr_event_mult"></span> × ATR.</li>
+            <li><b>macd_cross_up / down</b>: histogram crosses zero <i>and</i> |hist| ≥ <span class="num" data-cfg="signals.macd_min_hist_atr"></span> × ATR. Sub-threshold flips are chop, not momentum.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Gates, first failure wins</h3>
+          <ul>
+            <li><code>market_closed</code> · <code>stale_data</code> (bar older than <span class="num" data-cfg="signals.stale_bar_factor"></span> × 5 min) · <code>insufficient_history</code> (&lt; <span class="num" data-cfg="signals.min_bars"></span> bars)</li>
+            <li><code>missing_quote</code> (spot quote absent or older than <span class="num" data-cfg="screener.max_quote_age_seconds"></span> s against the broker clock) · <code>no_event</code></li>
+            <li><code>rsi_exhausted</code>: calls dropped at RSI ≥ <span class="num" data-cfg="signals.rsi_overbought"></span>, puts at ≤ <span class="num" data-cfg="signals.rsi_oversold"></span>. Exits still see the raw events: a capitulation gap must close a held position.</li>
+            <li>Held-position gates: <code>pending_order</code>, <code>exiting</code>, <code>opposing_held</code>.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="card">
+        <h3>What <span class="num" data-v="symbolCycles"></span> symbol-cycles ran into</h3>
+        <div class="bars" id="gateBars"></div>
+        <p style="font-size:12.5px; color:var(--ink-2); margin-top:12px">Most cycles have nothing to decide. Only <b><span class="num" data-v="passPct"></span></b> of symbol-cycles reached the decider. Trend EMAs (25 / 50) are shown to the decider as context but never gate.</p>
+      </div>
+    </div>
+    <div class="source"><code>signals.py</code> · gate tally from every candidate in <code>logs/cycles.jsonl</code> · thresholds from <code>settings.yaml</code>.</div>
+  </div>
+</section>
+
+<!-- 6 · Screener -->
+<section class="slide" id="s6">
+  <div class="inner">
+    <div class="eyebrow"><span class="n">06</span> Component · options screener</div>
+    <h2>Turning "NVDA, calls" into two exact contracts.</h2>
+    <div class="strip">
+      <div class="step"><div class="k">1 · expiries</div><b><span class="num" data-cfg="screener.min_dte"></span>–<span class="num" data-cfg="screener.max_expiry_lookahead_days"></span> DTE</b><span class="v">keep only expiries with ≥ <span class="num" data-cfg="screener.min_liquid_legs_per_expiry"></span> liquid strikes near spot, then the nearest <span class="num" data-cfg="screener.expiries_to_screen"></span></span></div>
+      <div class="step"><div class="k">2 · strikes</div><b>OTM + the ATM bracket</b><span class="v">the just-in-the-money strike is usually the tightest-quoted, highest-OI leg</span></div>
+      <div class="step"><div class="k">3 · per leg</div><b>Liquidity and freshness</b><span class="v">OI ≥ <span class="num" data-cfg="screener.min_open_interest"></span> · bid/ask ≤ <span class="num" data-cfg="screener.max_leg_spread_bps"></span> bps · quote within ±<span class="num" data-cfg="screener.max_quote_age_seconds"></span> s of the broker clock · IV present</span></div>
+      <div class="step"><div class="k">4 · width</div><b><span class="num" data-cfg-pct="screener.min_width_pct"></span>–<span class="num" data-cfg-pct="screener.max_width_pct"></span> of spot</b><span class="v">same rule sizes SPY and a $30 ETF</span></div>
+      <div class="step"><div class="k">5 · debit band</div><b><span class="num" data-cfg-pct="screener.min_debit_frac"></span>–<span class="num" data-cfg-pct="screener.max_debit_frac"></span> of width</b><span class="v">keeps the long leg near the money and reward:risk ≥ ~1.2. No lottery tickets.</span></div>
+      <div class="step"><div class="k">6 · rank</div><b>Reward : risk, highest first</b><span class="v">(width − debit) / debit; ties go to the tighter combined bid/ask</span></div>
+    </div>
+    <div class="cols c2r">
+      <div class="card">
+        <h3>Why picks die: <span class="num" data-v="screenRejTotal"></span> leg and pair rejections to make <span class="num" data-v="orders"></span> orders</h3>
+        <div class="bars" id="rejBars"></div>
+      </div>
+      <div class="card">
+        <h3>Every rejection is named</h3>
+        <p style="font-size:13.5px">The screener returns a spread <i>or</i> a tally of why not, and the tally goes in the journal. That is how the 9/1 review found SPY alone had <b>925 <code>too_narrow</code></b> rejections: a 2% width floor was $15 on a $761 underlying. The floor became 1% the next morning.</p>
+        <p style="font-size:13.5px; margin-top:10px">A pick with no surviving spread is journaled as <code>no_spread</code> and costs nothing. <span data-v="noSpread"></span> of <span data-v="picks"></span> picks ended that way.</p>
+      </div>
+    </div>
+    <div class="source"><code>options_screener.py</code> · <code>docs/SPREAD_SELECTION.md</code> · rejection tallies summed over every entry attempt in the journal.</div>
+  </div>
+</section>
+
+<!-- 7 · Decision layer -->
+<section class="slide" id="s7">
+  <div class="inner">
+    <div class="eyebrow"><span class="n">07</span> Component · decision layer</div>
+    <h2>The agent sees nine numbers per symbol and may answer with two words.</h2>
+    <div class="cols c2">
+      <div style="display:grid; gap:12px">
+        <pre><span class="c">// the briefing, one object per gate-passing symbol</span>
+{ <span class="k">"symbol"</span>: <span class="s">"NVDA"</span>, <span class="k">"spot"</span>: 224.06,
+  <span class="k">"events"</span>: [{ <span class="k">"kind"</span>: <span class="s">"macd_cross_up"</span>, <span class="k">"direction"</span>: <span class="s">"CALL"</span> }],
+  <span class="k">"rsi"</span>: 53.7, <span class="k">"atr"</span>: 1.10, <span class="k">"macd_hist"</span>: 0.078,
+  <span class="k">"ema_fast_dist"</span>: 0.42, <span class="k">"ema_slow_dist"</span>: -0.35,
+  <span class="k">"held"</span>: null }
+
+<span class="c">// the only fields that matter in the reply</span>
+{ <span class="k">"action"</span>: <span class="s">"enter"</span>, <span class="k">"symbol"</span>: <span class="s">"NVDA"</span>, <span class="k">"direction"</span>: <span class="s">"CALL"</span> }
+<span class="c">// or: pass. Passing is always acceptable.</span></pre>
+        <div class="card llm">
+          <h3>Who decided</h3>
+          <p style="font-size:13.5px">Every live pick (<span class="num" data-v="picks"></span> of <span class="num" data-v="picks"></span>) was <b>Claude</b>, running the <code>/paca-agent</code> skill in Claude Code and piping its choice into <code>cli.py run --manual-mode</code>. An OpenRouter path with the same JSON contract exists and went unused. No chain data, no account, no P&amp;L ever reaches the decider.</p>
+        </div>
+      </div>
+      <div style="display:grid; gap:12px">
+        <div class="card">
+          <h3>The rubric it trades by (from the skill)</h3>
+          <ul style="font-size:13.5px">
+            <li>A gap or breakout beyond 2 ATR is a strong impulse. A bare MACD cross is weak.</li>
+            <li><b>Bare crosses need a second leg to stand on:</b> a same-bar gap or breakout, or price on the event's side of both EMAs with |hist|/ATR ≥ 0.10, or a stated higher-timeframe reason.</li>
+            <li>Never a second same-direction cross on the same symbol in a session.</li>
+            <li>A second entry in a cycle needs its own thesis. SPY then QQQ is one bet twice.</li>
+            <li>When uncertain, pass. No order beats a guessed order.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <p class="quote">"The passes, which leaned on 'whipsaw', 'lower high', 'price above EMAs on a bearish cross', were right 22 times and never clearly wrong. The mechanical filters and the pass discipline carried the day; the discretionary entries did not."</p>
+          <div class="cite">docs/trading_review.md · review of 2026-09-02, written by the decider about itself</div>
+        </div>
+      </div>
+    </div>
+    <div class="source"><code>decision_layer.py</code> (system prompt, JSON contract) · <code>.claude/skills/paca-agent/SKILL.md</code> · the decider's reasoning lives in the session transcript; the journal stores only the pick and its trigger events.</div>
+  </div>
+</section>
+
+<!-- 8 · Safety -->
+<section class="slide" id="s8">
+  <div class="inner">
+    <div class="eyebrow"><span class="n">08</span> Safety · the AI cannot bypass the code</div>
+    <h2><span class="num" data-v="vetoPct"></span> of the agent's picks were killed by deterministic code after it chose them.</h2>
+    <div class="cols c2">
+      <div class="funnel" id="funnel"></div>
+      <div style="display:grid; gap:12px">
+        <div class="card">
+          <h3>Guards between a pick and an order</h3>
+          <ul style="font-size:13.5px">
+            <li>Symbol must be one of the gate-passing candidates it was shown; direction exactly <code>CALL</code> or <code>PUT</code>; malformed JSON means no entry.</li>
+            <li>An add to a held underlying must match the held direction, whatever the decider said.</li>
+            <li>Screener veto (<code>no_spread</code>) · risk veto (<code>risk_caps</code>) · options level 3 re-read from the account.</li>
+            <li><b>Pre-submit re-check</b> with a fresh clock, fresh account and fresh quotes: stale leg, wide leg, debit out of band, pending order on the symbol. Vetoed the same losing QQQ put two days running.</li>
+            <li>Exits never consult the decider. <span data-v="exitAttempts"></span> exits to date, all code-decided.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Guards around the account</h3>
+          <ul style="font-size:13.5px">
+            <li>Startup aborts unless <code>ALPACA_PAPER=true</code> and no live flag or live endpoint is set. <code>paper=True</code> is hardcoded in the client.</li>
+            <li>One submission function, whitelisted leg shapes, day limit orders only, nothing ever cancels or exercises automatically.</li>
+            <li>Deterministic <code>client_order_id</code> per cycle and spread, so a retry cannot double-fill.</li>
+            <li>Unknown equity or an unpairable leg means <b>refuse</b>, never estimate.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="source">Funnel counts from <code>logs/cycles.jsonl</code> over every live cycle · guards in <code>decision_layer.parse_entry_choice</code>, <code>cli._attempt_entry</code>, <code>broker.submit_paper_order</code>, <code>broker.load_config</code>.</div>
+  </div>
+</section>
+
+<!-- 9 · Risk -->
+<section class="slide" id="s9">
+  <div class="inner">
+    <div class="eyebrow"><span class="n">09</span> Component · risk management and position sizing</div>
+    <h2>Four rooms, and the smallest one sets the size.</h2>
+    <div class="cols c2">
+      <div style="display:grid; gap:12px">
+        <div class="card">
+          <h3>Caps, as fractions of live equity (re-read every cycle)</h3>
+          <div class="bars" id="capBars"></div>
+        </div>
+        <pre>rooms = {
+  per_entry:      <span class="k">0.5%</span> × equity,
+  per_underlying: <span class="k">1.5%</span> × equity − risk already on this name,
+  per_cycle:      <span class="k">1.0%</span> × equity − premium spent this cycle,
+  total:          <span class="k">10%</span>  × equity − open risk − spent this cycle,
+}
+qty = floor( min(rooms) / (net_debit × 100) )
+<span class="c"># qty &lt; 1 → refuse, naming the binding room
+# unknown equity or open risk → refuse before any math</span></pre>
+      </div>
+      <div style="display:grid; gap:12px">
+        <div class="card">
+          <h3>Premium at risk per trade</h3>
+          <div class="bars" id="premBars"></div>
+          <p style="font-size:12.5px; color:var(--ink-2); margin-top:10px">Contracts ranged 1 to 11 because the debit ranged 0.83 to 2.65 against the same $500 room. The cheap NVDA spread got the most contracts, and that is where the leverage came from.</p>
+        </div>
+        <div class="card">
+          <h3>Adding to a winner, safely</h3>
+          <p style="font-size:13.5px"><code>allow_stacking</code> permits a same-direction add to a held underlying up to the 1.5% cap. The add never reuses a held leg: Alpaca nets positions per contract, so buying a strike we are short would unpair the held spread and put it beyond the exit manager. Per-cycle entries cap at floor(1.0% / 0.5%) = 2, decided one at a time.</p>
+        </div>
+      </div>
+    </div>
+    <div class="source"><code>pos_and_risk.size_entry</code> · <code>settings.yaml</code> risk section · premium per trade from <code>pnl.py realized</code> (debit × qty × 100).</div>
+  </div>
+</section>
+
+<!-- 10 · Exits -->
+<section class="slide" id="s10">
+  <div class="inner">
+    <div class="eyebrow"><span class="n">10</span> Component · exits and take-profit</div>
+    <h2>Exits are mechanical, checked every cycle, and the agent is never asked.</h2>
+    <div class="strip">
+      <div class="step"><div class="k">1 · expiry</div><b>DTE ≤ <span class="num" data-cfg="exits.exit_dte"></span></b><span class="v">signal-based, fires even on missing marks</span></div>
+      <div class="step"><div class="k">2 · reversal</div><b>Opposing event fires</b><span class="v">a gap, breakout or qualified cross against the held direction</span></div>
+      <div class="step"><div class="k">3 · stop</div><b>mark ≤ <span class="num" data-cfg="exits.stop_fraction"></span> × debit</b><span class="v">debit-relative on purpose: it frees the risk budget</span></div>
+      <div class="step"><div class="k">4 · take-profit</div><b>mark ≥ min(<span class="num" data-cfg="exits.take_profit_mult"></span> × debit, <span class="num" data-cfg="exits.take_profit_width_frac"></span> × width)</b><span class="v">mark / width ≈ the market's probability of a full payoff</span></div>
+    </div>
+    <div class="cols c2">
+      <div style="display:grid; gap:12px">
+        <div class="card">
+          <h3>Why a width fraction</h3>
+          <p style="font-size:13.5px">For a vertical, mark ÷ width is roughly the risk-neutral probability the spread finishes fully in the money. A fixed fraction therefore means the <b>same remaining reward-to-risk on every spread</b>: at 65% of width, 0.54 : 1. A debit multiple measures the entry price instead, and 3× is unreachable for any fill above 33% of width. The multiple stays only as a ceiling.</p>
+        </div>
+        <div class="card">
+          <h3>Exit reasons so far</h3>
+          <div class="bars" id="exitBars"></div>
+          <p style="font-size:12.5px; color:var(--ink-2); margin-top:10px">The stop and the expiry exit have never fired. The reversal exit has closed every loser before it reached −50%, and one winner at +104%.</p>
+        </div>
+      </div>
+      <div class="chart">
+        <div class="plot" id="tslaChart"></div>
+        <div class="cap" id="tslaCap">TSLA 375/380 call spread, Sep 18 expiry. Entered on a bare MACD cross the review graded "bad entry, chasing a bounce". Overnight it went to −21%, then to the short strike. Under the new rule the 65%-of-width target was 3.25; the mark was 2.43, so it held. Thirty seconds later a qualified <code>macd_cross_down</code> fired the reversal exit at 2.54.</div>
+      </div>
+    </div>
+    <div class="source"><code>pos_and_risk.exit_decision</code> · <code>docs/TAKE_PROFIT.md</code> (the study, with the Black-Scholes grid and the N(d2) argument) · rule approved 2026-09-03.</div>
+  </div>
+</section>
+
+<!-- 11 · Loop -->
+<section class="slide" id="s11">
+  <div class="inner">
+    <div class="eyebrow"><span class="n">11</span> Operating it · the five-minute loop</div>
+    <h2>One line at the Claude Code prompt runs the trading day.</h2>
+    <pre style="white-space: pre-wrap">/loop 5m /paca-agent — before starting each cycle check the current time; if it is 4:01pm ET or later, or the market is closed, do NOT run the cycle: stop the loop immediately</pre>
+    <div class="strip">
+      <div class="step"><div class="k">1 · read</div><b>Context, read-only</b><span class="v"><code>cli.py candidates</code>, <code>cli.py account</code>, last 10 journal lines</span></div>
+      <div class="step llm"><div class="k">2 · decide</div><b>As a momentum trader</b><span class="v">reasoning written out before acting; pass when nothing convinces</span></div>
+      <div class="step"><div class="k">3 · execute</div><b>Pipe the pick in</b><span class="v"><code>printf "3\nCALL\n" | cli.py run --manual-mode --execute</code></span></div>
+      <div class="step"><div class="k">4 · verify</div><b>Log line must match intent</b><span class="v">candidate list is recomputed inside the run; a mismatch triggers an immediate cancel offer</span></div>
+      <div class="step"><div class="k">5 · publish</div><b>Redeploy both dashboards</b><span class="v">even on a pass or a closed market</span></div>
+      <div class="step"><div class="k">6 · report</div><b>Candidates, reasoning, receipts</b><span class="v">verbatim command output, fill status, dashboard URL</span></div>
+    </div>
+    <div class="cols c2r">
+      <div class="tiles" id="loopTiles"></div>
+      <div class="linkcards">
+        <a class="linkcard" href="https://alpaca-hackathon-2026-artifacts-paca-cycles.surge.sh"><div class="k"><span class="live"></span>live · cycle monitor</div><b>Every cycle, every gate, every veto</b><span>Candidates with their gate result, exits, the decision, order receipts, open positions with Alpaca marks, realized P&amp;L, and the config that was live.</span></a>
+        <a class="linkcard" href="https://alpaca-hackathon-2026-artifacts-paca-candles.surge.sh"><div class="k"><span class="live"></span>live · candles</div><b>Signals on the chart they came from</b><span>5-minute candles for the whitelist with RSI, ATR, MACD, every event bar, and every filled spread drawn as a strike band from entry to exit.</span></a>
+      </div>
+    </div>
+    <div class="source">Loop mode also exists in code (<code>cli.py run --loop</code> with fill polling); the hackathon days ran Claude in the loop so the decision and its reasoning were visible each cycle.</div>
+  </div>
+</section>
+
+<!-- 12 · Review -->
+<section class="slide" id="s12">
+  <div class="inner">
+    <div class="eyebrow"><span class="n">12</span> Operating it · the end-of-day trading review</div>
+    <h2>After the close, the decider audits its own book and the code it ran on.</h2>
+    <div class="strip">
+      <div class="step"><div class="k">1 · digest</div><b>Journal only</b><span class="v">cycles, gates, events by distinct bar, every attempt and exit</span></div>
+      <div class="step"><div class="k">2 · P&amp;L</div><b>From Alpaca fills</b><span class="v"><code>pnl.py</code> is the authority; marks in the journal are never used for P&amp;L</span></div>
+      <div class="step"><div class="k">3 · score</div><b>Last review's watch list</b><span class="v">met / not met / no data, one line of evidence each</span></div>
+      <div class="step"><div class="k">4 · grade</div><b>Every entry and every pass</b><span class="v">mid at +30m, +60m, EOD; friction counted; "right process, wrong outcome" separated from misses</span></div>
+      <div class="step"><div class="k">5 · propose</div><b>Findings, triaged</b><span class="v">bug fix / refactor / methodology · FIX NOW / DEFER / IGNORE</span></div>
+      <div class="step"><div class="k">6 · apply</div><b>Only what the human picks</b><span class="v">then <code>pytest</code> (247 tests) and <code>preflight</code>; the skill never commits</span></div>
+    </div>
+    <div class="card">
+      <h3>The 2026-09-01 watch list, scored the next evening</h3>
+      <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Watch item written 9/1</th><th>Verdict 9/2</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr><td>Mix of rejection reasons; loosen the debit floor toward 0.20 if <code>debit_out_of_band</code> dominates</td><td><span class="tag na">no action needed</span></td><td>It was the top reason for QQQ (102) and TSLA (58), but both still produced a candidate spread.</td></tr>
+          <tr><td>Do SPY and QQQ now produce entries?</td><td><span class="tag part">partially met</span></td><td>QQQ screened a valid 13-wide put at 25% of width (the 1% floor works); the recheck vetoed it on quotes. SPY fired no event all day.</td></tr>
+          <tr><td>Holding times lengthen toward multi-hour or overnight</td><td><span class="tag met">met</span></td><td>Both closed round trips were overnight holds (18 h and 23 h). On 9/1 the longest hold was 2 h 46 m.</td></tr>
+          <tr><td>Stop or take-profit finally fires</td><td><span class="tag met">met</span></td><td>NVDA take-profit fired at 11:05 at 2.4× debit. The open TSLA spread sat at −21% against a −50% stop.</td></tr>
+          <tr><td><i>Unlisted bonus check:</i> reversal-exit whipsaw</td><td><span class="tag met">gone</span></td><td>One reversal exit (on a real 2-ATR breakout) against four on 9/1. TSLA survived three sub-threshold sign flips that would each have closed it under the old rule.</td></tr>
+        </tbody>
+      </table>
+      </div>
+    </div>
+    <div class="source"><code>.claude/skills/trading-review/SKILL.md</code> and <code>analyze.py</code> · <code>docs/trading_review.md</code>, newest review first · "One day is a small sample. State uncertainty."</div>
+  </div>
+</section>
+
+<!-- 13 · Learnings -->
+<section class="slide" id="s13">
+  <div class="inner">
+    <div class="eyebrow"><span class="n">13</span> What three days of paper taught the system</div>
+    <h2>Every rule change has a date, a commit, and a journal fact behind it.</h2>
+    <div class="timeline">
+      <div class="tcard rule"><div class="when">9/1 · pre-market to mid-day</div><b>Widths as % of spot, OTM-only, rank by reward:risk, caps tightened to 0.5% / 1.5%</b><div class="ev">Then four reversal-exit losses in a row, held 48 min to 2 h 46 m. Stop and take-profit never fired once.</div></div>
+      <div class="tcard rule"><div class="when">9/2 · 09:36 · from the 9/1 review</div><b>MACD cross needs |hist| ≥ 0.05 ATR · RSI 70/30 entry gate · debit band 25–45% of width · width floor 1%</b><div class="ev">Bare sign flips had whipsawed every position. SPY alone: 925 <code>too_narrow</code> rejections. The ranker had bought an 11%-of-width TSLA lottery ticket.</div></div>
+      <div class="tcard fix"><div class="when">9/2 · 10:17</div><b>Exit order ids get the strikes</b><div class="ev">Two AMZN call spreads exited in one cycle with identical ids; Alpaca filled one and refused the other. Self-healed a cycle later, then fixed.</div></div>
+      <div class="tcard rule"><div class="when">9/2 · 11:17 → 12:19</div><b>Take-profit 2.0× → 3.5× → 3.0×</b><div class="ev">Nine minutes after NVDA filled at 2.06 the multiple went to 3.5×, then back to 3.0× "to let winners run a bit more".</div></div>
+      <div class="tcard rule"><div class="when">9/2 · 12:13 → 12:34</div><b>Same-direction stacking · up to 2 entries per cycle</b><div class="ev">NVDA fired twice while held at 0.99% of equity and was gated <code>already_held</code>; the 1.5% per-underlying cap was unreachable.</div></div>
+      <div class="tcard fix"><div class="when">9/3 · 09:07 · from the 9/2 review</div><b>Cancel CLI restored · stale spot quotes gated · every veto logged</b><div class="ev">The cancel loop was commented out and was needed once for real. GLD's IEX quote sat frozen at 400.66 for 2.5 hours and passed every gate.</div></div>
+      <div class="tcard rule"><div class="when">9/3 · 11:03</div><b>Take-profit = min(3× debit, 0.65 × width)</b><div class="ev">Checked live against TSLA 375/380: target 3.25 vs mark 2.40, hold. Thirty seconds later the reversal exit banked it at 2.54.</div></div>
+    </div>
+    <div class="callout">
+      <b>The uncomfortable part.</b> The biggest winner, NVDA 227.5/235 for <span class="num" id="nvdaPnl">+$1,320</span>, was a bare MACD cross at 0.071 ATR on a debit of 11% of width. Today's system would not take it: the screener's 25%-of-width debit floor refuses the structure outright, and the decision rubric refuses a bare cross without a second leg. Both rules came out of the reviews anyway, because across all <span class="num" data-v="picks"></span> picks that pattern lost more often than it paid, and one outlier is not a rule. The system is tuned on the process, not on its best trade.
+    </div>
+    <div class="source"><code>git log</code> on <code>settings.yaml</code> and <code>*.py</code> · <code>docs/trading_review.md</code> · <code>docs/TODO.md</code>. Times are US Eastern.</div>
+  </div>
+</section>
+
+<!-- 14 · Next -->
+<section class="slide" id="s14">
+  <div class="inner">
+    <div class="eyebrow"><span class="n">14</span> What comes next</div>
+    <h2>Two changes the journal is already asking for.</h2>
+    <div class="cols eq">
+      <div class="card">
+        <h3>1 · Regular-hours session filter</h3>
+        <p style="font-size:14px">Indicators run on IEX bars that include pre- and post-market prints. Thin extended-hours bars shrink ATR, the yardstick every event is measured against, and the 09:30 "gap" compares against the previous extended-hours bar, so real overnight gaps are mostly invisible. Restricting <code>market_data.fetch_ohlcv</code> to 09:30–16:00 bars fixes both. Rated the highest-value remaining item in the review; deferred during the hackathon because it changes every signal at once.</p>
+      </div>
+      <div class="card">
+        <h3>2 · One decision per bar</h3>
+        <p style="font-size:14px">A cycle runs every ~4.8 minutes, so the same completed 5-minute bar can be the "latest" bar twice, and one event can be acted on twice. WMT fired nine events inside a one-dollar range on 9/2. Recording acted-on (symbol, bar timestamp) pairs makes each event one-shot and removes a whole class of duplicate picks.</p>
+      </div>
+    </div>
+    <div class="cols c3" style="gap:12px">
+      <div class="card"><h3>Later · greeks in the quote model</h3><p style="font-size:13px">Delta on each leg unlocks a short-strike-delta take-profit and a delta-based entry filter, both studied and parked in <code>docs/TAKE_PROFIT.md</code>.</p></div>
+      <div class="card"><h3>Later · 15-minute bars</h3><p style="font-size:13px">Cleaner signals, far fewer trades. Deliberately kept at 5 m so the hackathon days produced enough decisions to grade.</p></div>
+      <div class="card"><h3>Later · whitelist hygiene</h3><p style="font-size:13px">WMT and MSFT fail the liquidity screen most and fire the most churn. <code>/whitelist-candidates</code> already probes replacements read-only.</p></div>
+    </div>
+    <div class="linkcards">
+      <a class="linkcard" href="https://alpaca-hackathon-2026-artifacts-paca-cycles.surge.sh"><div class="k">live</div><b>Cycle monitor</b><span>alpaca-hackathon-2026-artifacts-paca-cycles.surge.sh</span></a>
+      <a class="linkcard" href="https://alpaca-hackathon-2026-artifacts-paca-candles.surge.sh"><div class="k">live</div><b>Candle charts</b><span>alpaca-hackathon-2026-artifacts-paca-candles.surge.sh</span></a>
+      <a class="linkcard" id="repoCard" href="https://github.com/maria2469/Alpaca-Ai-Hackathon"><div class="k">source</div><b>Repository</b><span>github.com/maria2469/Alpaca-Ai-Hackathon</span></a>
+    </div>
+    <div class="source">PACA · built for the Alpaca AI Trading Agents Hackathon on lablab.ai · paper trading only · deck data generated <span id="genAt">—</span>.</div>
+  </div>
+</section>
+
+</main>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (s, el) => (el || document).querySelector(s);
+  const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
+  const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const ET = "America/New_York";
+
+  // ---------- theme ----------
+  const toggle = $("#themeToggle");
+  toggle.addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("paca-theme", next); } catch (e) {}
+    drawCharts();
+  });
+
+  // ---------- slide navigation ----------
+  const slides = $$(".slide");
+  const onlyN = parseInt(new URLSearchParams(location.search).get("only") || "", 10);
+  if (onlyN >= 1 && onlyN <= slides.length) { document.documentElement.classList.add("only"); slides[onlyN - 1].classList.add("only"); }
+  const counter = $("#counter");
+  let current = 0;
+  const pad = (n) => String(n).padStart(2, "0");
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((e) => { if (e.isIntersecting) { current = slides.indexOf(e.target); counter.textContent = pad(current + 1) + " / " + pad(slides.length); } });
+  }, { threshold: 0.55 });
+  slides.forEach((s) => io.observe(s));
+  const go = (i) => { i = Math.max(0, Math.min(slides.length - 1, i)); slides[i].scrollIntoView({ block: "start" }); };
+  $("#nextBtn").addEventListener("click", () => go(current + 1));
+  $("#prevBtn").addEventListener("click", () => go(current - 1));
+  document.addEventListener("keydown", (e) => {
+    if (e.target.matches("input, textarea, button, a")) return;
+    if (["ArrowDown", "PageDown", " ", "j"].includes(e.key)) { e.preventDefault(); go(current + 1); }
+    if (["ArrowUp", "PageUp", "k"].includes(e.key)) { e.preventDefault(); go(current - 1); }
+    if (e.key === "Home") { e.preventDefault(); go(0); }
+    if (e.key === "End") { e.preventDefault(); go(slides.length - 1); }
+  });
+
+  // ---------- tooltip for css bars ----------
+  const tip = $("#tip");
+  document.addEventListener("mousemove", (e) => {
+    const t = e.target.closest("[data-tip]");
+    if (!t) { tip.classList.remove("on"); return; }
+    tip.textContent = t.dataset.tip; tip.style.left = e.clientX + "px"; tip.style.top = (e.clientY - 8) + "px"; tip.classList.add("on");
+  });
+
+  // ---------- formatting ----------
+  const money = (v, sign) => { if (v == null || isNaN(v)) return "—"; const s = v < 0 ? "−" : (sign ? "+" : ""); return s + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 }); };
+  const money2 = (v) => v == null ? "—" : "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const pct = (v, d) => v == null ? "—" : (v * 100).toFixed(d == null ? 1 : d) + "%";
+  const signPct = (v) => v == null ? "—" : (v < 0 ? "−" : "+") + Math.abs(v * 100).toFixed(1) + "%";
+  const hold = (m) => { if (m == null) return "—"; if (m < 90) return Math.round(m) + " min"; const h = Math.floor(m / 60), mm = Math.round(m % 60); return h + " h " + pad(mm) + " m"; };
+  const etFmt = new Intl.DateTimeFormat("en-US", { timeZone: ET, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+  const etDate = (iso) => etFmt.format(new Date(iso)).replace(",", "");
+  const plotTime = (epoch) => { // Plotly date axes are zone-less; feed them ET wall-clock strings
+    const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: ET, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).formatToParts(new Date(epoch * 1000)).map((x) => [x.type, x.value]));
+    return `${p.year}-${p.month}-${p.day} ${p.hour === "24" ? "00" : p.hour}:${p.minute}:${p.second}`;
+  };
+  const strikes = (t) => `${t.underlying} ${fmtStrike(t.long_strike)}/${fmtStrike(t.short_strike)} ${t.type}`;
+  const fmtStrike = (s) => Number.isInteger(s) ? String(s) : String(s);
+  const get = (obj, path) => path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
+
+  // ---------- css bar builders ----------
+  function hbars(el, rows, opts) {
+    opts = opts || {};
+    const max = Math.max(...rows.map((r) => Math.abs(r.v))) || 1;
+    el.innerHTML = rows.map((r) => {
+      const w = Math.max(1.2, Math.abs(r.v) / max * 100);
+      const cls = r.cls || (opts.diverge ? (r.v >= 0 ? "good" : "bad") : "");
+      let style;
+      if (opts.diverge) style = r.v >= 0 ? `left:50%; width:${w / 2}%` : `left:${50 - w / 2}%; width:${w / 2}%`;
+      else style = `width:${w}%`;
+      return `<div class="bar-row" data-tip="${r.tip || (r.label + ': ' + r.text)}"><div class="lab" title="${r.label}">${r.label}</div><div class="track"><div class="fill ${cls}" style="${style}"></div></div><div class="val ${opts.diverge ? (r.v >= 0 ? 'pos' : 'neg') : ''}">${r.text}</div></div>`;
+    }).join("");
+  }
+
+  // ---------- Plotly trade chart ----------
+  let charts = [];
+  function tradeChart(el, slice, trade, title) {
+    if (!slice || !slice.bars.length) { el.innerHTML = `<div class="cap">No candle slice for ${title}.</div>`; return; }
+    const cols = D.candle_columns; const ci = Object.fromEntries(cols.map((c, i) => [c, i]));
+    const bars = slice.bars;
+    const x = bars.map((b) => plotTime(b[ci.t]));
+    const surface = cssVar("--surface"), ink = cssVar("--ink"), muted = cssVar("--muted"), grid = cssVar("--grid"), good = cssVar("--good"), bad = cssVar("--critical"), accent = cssVar("--accent"), ink2 = cssVar("--ink-2");
+    const entryEpoch = Date.parse(trade.entered_at) / 1000, exitEpoch = Date.parse(trade.exited_at) / 1000;
+    const nearest = (ep) => bars.reduce((best, b) => Math.abs(b[ci.t] - ep) < Math.abs(best[ci.t] - ep) ? b : best, bars[0]);
+    const eb = nearest(entryEpoch), xb = nearest(exitEpoch);
+    const lo = Math.min(trade.long_strike, trade.short_strike), hi = Math.max(trade.long_strike, trade.short_strike);
+    const traces = [
+      { type: "candlestick", x, open: bars.map((b) => b[ci.open]), high: bars.map((b) => b[ci.high]), low: bars.map((b) => b[ci.low]), close: bars.map((b) => b[ci.close]),
+        increasing: { line: { color: good, width: 1 }, fillcolor: good }, decreasing: { line: { color: bad, width: 1 }, fillcolor: bad }, name: trade.underlying, showlegend: false, hoverinfo: "x+y" },
+      { type: "scatter", mode: "markers", x: [plotTime(eb[ci.t])], y: [eb[ci.close]], marker: { symbol: "triangle-up", size: 16, color: accent, line: { color: ink, width: 1.5 } }, name: "entry", hovertemplate: `entry · debit ${trade.entry_debit.toFixed(2)} × ${trade.qty}<extra></extra>`, showlegend: false },
+      { type: "scatter", mode: "markers", x: [plotTime(xb[ci.t])], y: [xb[ci.close]], marker: { symbol: "x", size: 14, color: trade.pnl >= 0 ? good : bad, line: { color: ink, width: 1.5 } }, name: "exit", hovertemplate: `exit · ${trade.exit_reason || "exit"} · credit ${trade.exit_credit.toFixed(2)} · ${money(trade.pnl, true)}<extra></extra>`, showlegend: false },
+      { type: "scatter", mode: "lines", x, y: bars.map((b) => b[ci.rsi]), yaxis: "y2", line: { color: accent, width: 2 }, name: "RSI 14", hovertemplate: "RSI %{y:.1f}<extra></extra>", showlegend: false },
+    ];
+    const cfg = D.config.signals || {};
+    const layout = {
+      paper_bgcolor: surface, plot_bgcolor: surface, margin: { l: 48, r: 16, t: 12, b: 36 }, hovermode: "x unified",
+      font: { family: "IBM Plex Mono, Menlo, monospace", size: 10.5, color: muted },
+      xaxis: { type: "date", gridcolor: grid, linecolor: grid, rangeslider: { visible: false }, rangebreaks: [{ bounds: ["sat", "mon"] }, { bounds: [16, 9.5], pattern: "hour" }], tickformat: "%b %d %H:%M", showspikes: true, spikecolor: muted, spikethickness: 1, spikemode: "across" },
+      yaxis: { domain: [0.3, 1], gridcolor: grid, zeroline: false, tickprefix: "$", fixedrange: true },
+      yaxis2: { domain: [0, 0.22], gridcolor: grid, zeroline: false, range: [0, 100], tickvals: [30, 70], fixedrange: true },
+      shapes: [
+        { type: "rect", xref: "x", yref: "y", x0: plotTime(eb[ci.t]), x1: plotTime(xb[ci.t]), y0: lo, y1: hi, fillcolor: accent, opacity: 0.16, line: { width: 0 } },
+        { type: "line", xref: "paper", x0: 0, x1: 1, yref: "y2", y0: cfg.rsi_overbought || 70, y1: cfg.rsi_overbought || 70, line: { color: muted, width: 1, dash: "dot" } },
+        { type: "line", xref: "paper", x0: 0, x1: 1, yref: "y2", y0: cfg.rsi_oversold || 30, y1: cfg.rsi_oversold || 30, line: { color: muted, width: 1, dash: "dot" } },
+      ],
+      annotations: [
+        { x: plotTime(eb[ci.t]), y: eb[ci.close], xref: "x", yref: "y", text: `▲ entry ${trade.entry_debit.toFixed(2)}`, showarrow: true, arrowhead: 0, ax: -60, ay: 34, font: { color: ink2, size: 10.5 }, arrowcolor: muted },
+        { x: plotTime(xb[ci.t]), y: xb[ci.close], xref: "x", yref: "y", text: `✕ ${trade.exit_reason || "exit"} ${trade.exit_credit.toFixed(2)}`, showarrow: true, arrowhead: 0, ax: 40, ay: -36, font: { color: ink2, size: 10.5 }, arrowcolor: muted },
+        { x: 0, y: hi, xref: "paper", yref: "y", text: `short ${fmtStrike(hi)}`, showarrow: false, xanchor: "left", yanchor: "bottom", font: { color: ink2, size: 10 } },
+        { x: 0, y: lo, xref: "paper", yref: "y", text: `long ${fmtStrike(lo)}`, showarrow: false, xanchor: "left", yanchor: "top", font: { color: ink2, size: 10 } },
+        { x: 0, y: 0.22, xref: "paper", yref: "paper", text: "RSI 14", showarrow: false, xanchor: "left", yanchor: "bottom", font: { color: muted, size: 10 } },
+      ],
+    };
+    Plotly.newPlot(el, traces, layout, { displayModeBar: false, responsive: true });
+    charts.push(el);
+  }
+
+  let D = null;
+  function drawCharts() {
+    if (!D) return;
+    charts.forEach((el) => { try { Plotly.purge(el); } catch (e) {} });
+    charts = [];
+    const hero = D.trades.slice().sort((a, b) => b.pnl - a.pnl)[0];
+    if (hero) tradeChart($("#heroChart"), D.slices.find((s) => s.exit_order === hero.exit_order), hero, hero.underlying);
+    const tsla = D.trades.find((t) => t.underlying === "TSLA" && t.long_strike === 375 && t.short_strike === 380);
+    if (tsla) tradeChart($("#tslaChart"), D.slices.find((s) => s.exit_order === tsla.exit_order), tsla, "TSLA 375/380");
+    else { $("#tslaChart").innerHTML = ""; $("#tslaCap").textContent = "TSLA 375/380 is not in the exported trades."; }
+  }
+
+  // ---------- render ----------
+  function render() {
+    const S = D.summary, A = D.account, C = D.config;
+    // config-driven numbers
+    $$("[data-cfg]").forEach((el) => { const v = get(C, el.dataset.cfg); el.textContent = v == null ? "?" : String(v); });
+    $$("[data-cfg-pct]").forEach((el) => { const v = get(C, el.dataset.cfgPct); el.textContent = v == null ? "?" : Math.round(v * 100) + "%"; });
+
+    // hero
+    const hero = D.trades.slice().sort((a, b) => b.pnl - a.pnl)[0];
+    if (hero) {
+      $("#heroPnl").innerHTML = `${money(hero.pnl, true)}<small>${signPct(hero.pnl_pct)} on ${money(hero.premium)} at risk</small>`;
+      $("#heroPnl").className = "big " + (hero.pnl >= 0 ? "pos" : "neg");
+      $("#heroLede").innerHTML = `<b>${hero.underlying} ${fmtStrike(hero.long_strike)}/${fmtStrike(hero.short_strike)} ${hero.direction} spread</b>, ${hero.expiration} expiry. Entered ${etDate(hero.entered_at)} ET on a MACD cross at a debit of ${hero.entry_debit.toFixed(2)} × ${hero.qty} contracts. Closed ${etDate(hero.exited_at)} ET by the <b>${(hero.exit_reason || "exit").replace("_", "-")}</b> rule at ${hero.exit_credit.toFixed(2)}, within 1% of that day's high. Held ${hold(hero.hold_min)}. Nobody watched it; the agent decided the direction, code did everything else.`;
+      $("#heroKv").innerHTML = [
+        ["signal", "macd_cross_up, |hist| / ATR 0.071, RSI 53.7"],
+        ["quoted → filled", `${hero.quoted_debit != null ? hero.quoted_debit.toFixed(2) : "—"} → ${hero.entry_debit.toFixed(2)} debit`],
+        ["risk at entry", `${money(hero.premium)} = ${pct(hero.premium / (D.cycles.days[0].equity_first || A.equity_start), 2)} of equity`],
+        ["exit", `${(hero.exit_reason || "").replace("_", "-")} at ${hero.exit_credit.toFixed(2)} = ${(hero.exit_credit / hero.entry_debit).toFixed(1)}× debit, ${Math.round(hero.exit_credit / hero.width * 100)}% of width`],
+      ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
+      $("#nvdaPnl").textContent = money(hero.pnl, true);
+    }
+
+    // scoreboard
+    const days = D.cycles.days;
+    $("#sbWindow").textContent = `${days[0].date} → ${days[days.length - 1].date} · ${D.cycles.total} live cycles · paper account`;
+    const eqDelta = A.equity - A.equity_start;
+    const payoff = S.avg_win && S.avg_loss ? (S.avg_win / Math.abs(S.avg_loss)) : null;
+    const tiles = [
+      ["equity now", money(A.equity), `${money2(A.equity)} · from ${money(A.equity_start)} on ${days[0].date}`, ""],
+      ["change", money(eqDelta, true), signPct(eqDelta / A.equity_start), eqDelta >= 0 ? "pos" : "neg"],
+      ["realized p&l", money(S.realized_pnl, true), `${S.trades} round trips, ${S.contracts} contracts`, S.realized_pnl >= 0 ? "pos" : "neg"],
+      ["win rate", `${S.wins} / ${S.trades}`, `${pct(S.wins / S.trades, 0)} of closed spreads`, ""],
+      ["payoff ratio", payoff ? payoff.toFixed(1) + " : 1" : "—", `avg win ${money(S.avg_win, true)} · avg loss ${money(S.avg_loss)}`, ""],
+      ["return on premium", signPct(S.realized_pnl / S.premium_deployed), `${money(S.premium_deployed)} deployed in total`, S.realized_pnl >= 0 ? "pos" : "neg"],
+      ["median hold", hold(S.median_hold_min), `mean ${hold(S.mean_hold_min)}`, ""],
+      ["open now", `${A.open_spreads}`, `open risk ${money(A.open_risk)} · as of ${etDate(A.generated_at)} ET`, ""],
+    ];
+    $("#tiles").innerHTML = tiles.map(([l, v, s, c]) => `<div class="tile"><div class="label">${l}</div><div class="value ${c}">${v}</div><div class="sub">${s}</div></div>`).join("");
+    hbars($("#pnlByDay"), days.map((d) => ({ label: d.date.slice(5).replace("-", "/") + ` · ${d.cycles} cycles`, v: d.realized_pnl, text: money(d.realized_pnl, true), tip: `${d.date}: ${d.cycles} cycles ${d.first_et}–${d.last_et} ET, realized ${money(d.realized_pnl, true)}` })), { diverge: true });
+    hbars($("#pnlByTrade"), D.trades.map((t) => ({ label: strikes(t), v: t.pnl, text: money(t.pnl, true), tip: `${strikes(t)} ×${t.qty}: ${t.entry_debit.toFixed(2)} → ${t.exit_credit.toFixed(2)} (${t.exit_reason || "exit"}), held ${hold(t.hold_min)}` })), { diverge: true });
+    $("#sbNote").innerHTML = `${S.trades} trades is a small sample. The result comes from the payoff ratio, not the win rate: ${S.wins} winner${S.wins === 1 ? "" : "s"} ${S.wins === 1 ? "was" : "were"} let run overnight, ${S.losses} loser${S.losses === 1 ? "" : "s"} ${S.losses === 1 ? "was" : "were"} cut by the reversal exit, most inside a day. Largest loss ${money(S.largest_loss)}; largest win ${money(S.largest_win, true)}.`;
+
+    // signals gates
+    const gates = Object.entries(D.gates).sort((a, b) => b[1] - a[1]);
+    const symCycles = gates.reduce((s, g) => s + g[1], 0);
+    hbars($("#gateBars"), gates.map(([k, v]) => ({ label: k, v, text: v.toLocaleString(), cls: k === "PASS" ? "" : "dim", tip: `${k}: ${v.toLocaleString()} symbol-cycles (${pct(v / symCycles)})` })));
+    const pass = D.gates.PASS || 0;
+    $$("[data-v=symbolCycles]").forEach((el) => el.textContent = symCycles.toLocaleString());
+    $$("[data-v=passPct]").forEach((el) => el.textContent = pct(pass / symCycles));
+
+    // screener rejections
+    const rej = Object.entries(D.screen_rejections);
+    const rejTotal = rej.reduce((s, r) => s + r[1], 0);
+    hbars($("#rejBars"), rej.map(([k, v]) => ({ label: k, v, text: v.toLocaleString(), tip: `${k}: ${v.toLocaleString()} (${pct(v / rejTotal)})` })));
+    const picks = D.funnel.find((f) => f.stage.startsWith("picked")).n;
+    const orders = D.funnel.find((f) => f.stage.startsWith("orders")).n;
+    $$("[data-v=screenRejTotal]").forEach((el) => el.textContent = rejTotal.toLocaleString());
+    $$("[data-v=orders]").forEach((el) => el.textContent = orders);
+    $$("[data-v=picks]").forEach((el) => el.textContent = picks);
+    $$("[data-v=noSpread]").forEach((el) => el.textContent = D.post_pick_rejections.no_spread || 0);
+
+    // funnel
+    $("#funnel").innerHTML = D.funnel.map((f, i) => {
+      const prev = i ? D.funnel[i - 1].n : null;
+      const cls = f.stage.startsWith("picked") ? "human" : (i === D.funnel.length - 1 ? "final" : "");
+      const keep = prev ? `${pct(f.n / prev, 1)} of previous` : "every whitelisted symbol, every live cycle";
+      return (i ? `<div class="arrow">↓</div>` : "") + `<div class="stage ${cls}"><div><div class="name">${f.stage}${cls === "human" ? " <span class='tag'>the only discretionary step</span>" : ""}</div><div class="keep">${keep}</div></div><div class="n">${f.n.toLocaleString()}</div></div>`;
+    }).join("");
+    const vetoed = picks - orders;
+    $$("[data-v=vetoPct]").forEach((el) => el.textContent = pct(vetoed / picks, 0));
+    $$("[data-v=exitAttempts]").forEach((el) => el.textContent = S.exit_attempts);
+
+    // risk caps
+    const R = C.risk || {};
+    hbars($("#capBars"), [
+      ["per_entry_fraction", R.per_entry_fraction, "one entry's debit"], ["per_cycle_fraction", R.per_cycle_fraction, "new premium per cycle"],
+      ["per_underlying_fraction", R.per_underlying_fraction, "open premium on one name"], ["total_fraction", R.total_fraction, "all open premium"],
+    ].map(([k, v, d]) => ({ label: k.replace("_fraction", ""), v, text: pct(v, 1) + " · " + money(v * A.equity), tip: `${k} = ${v}: ${d} (${money(v * A.equity)} at current equity)` })));
+    hbars($("#premBars"), D.trades.map((t) => ({ label: `${strikes(t)} ×${t.qty}`, v: t.premium, text: money(t.premium), tip: `${strikes(t)}: ${t.entry_debit.toFixed(2)} × ${t.qty} × 100 = ${money(t.premium)}` })));
+
+    // exits
+    const er = Object.entries(S.exit_reasons);
+    ["stop", "expiry"].forEach((k) => { if (!S.exit_reasons[k]) er.push([k, 0]); });
+    hbars($("#exitBars"), er.map(([k, v]) => ({ label: k, v, text: String(v), cls: v ? "" : "dim", tip: `${k}: ${v} closed spread${v === 1 ? "" : "s"}` })));
+
+    // loop tiles
+    const gaps = days.map((d) => d.median_gap_min).filter((x) => x != null);
+    $("#loopTiles").innerHTML = [
+      ["live cycles", D.cycles.total.toLocaleString(), `${days.length} trading days`],
+      ["median cycle gap", gaps.length ? Math.min(...gaps).toFixed(1) + "–" + Math.max(...gaps).toFixed(1) + " min" : "—", "one decision per completed 5-minute bar"],
+      ["picks / passes", `${picks} / ${pass - picks}`, "gate-PASS opportunities the decider acted on / declined"],
+      ["last cycle", D.cycles.last_cycle_et ? D.cycles.last_cycle_et.slice(5, 16) : "—", "ET · dashboards redeployed after it"],
+    ].map(([l, v, s]) => `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${s}</div></div>`).join("");
+
+    $("#genAt").textContent = D.generated_at.replace("T", " ").replace("+00:00", " UTC");
+    drawCharts();
+  }
+
+  fetch("deck-data.json", { cache: "no-store" }).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); }).then((d) => { D = d; render(); })
+    .catch((err) => { $("#heroLede").textContent = "deck-data.json is missing or unreadable (" + err.message + "). Run deploy.sh to regenerate it."; });
+
+  let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => charts.forEach((el) => Plotly.Plots.resize(el)), 150); });
+})();
+</script>
+</body>
+</html>

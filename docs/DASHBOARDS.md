@@ -1,6 +1,6 @@
 # Dashboards — how the two surge pages are generated
 
-PACA publishes two static pages on [surge.sh](https://surge.sh). Neither page
+PACA publishes three static pages on [surge.sh](https://surge.sh). No page
 talks to Alpaca: a shell script exports fresh data files next to `index.html`
 and redeploys the directory, and the page `fetch()`es those files when it
 loads. Everything below is read-only with respect to trading — the exporters
@@ -10,6 +10,7 @@ never submit, cancel, or change an order.
 |---|---|---|---|
 | Cycle monitor | [alpaca-hackathon-2026-artifacts-paca-cycles.surge.sh](https://alpaca-hackathon-2026-artifacts-paca-cycles.surge.sh) | `surge_artifacts/paca-cycles/` | `cli.py account --export`, `pnl.py`, the journal |
 | Candles | [alpaca-hackathon-2026-artifacts-paca-candles.surge.sh](https://alpaca-hackathon-2026-artifacts-paca-candles.surge.sh) | `surge_artifacts/paca-candles/` | `export_candles.py` |
+| Case study deck | [alpaca-hackathon-2026-artifacts-paca-deck.surge.sh](https://alpaca-hackathon-2026-artifacts-paca-deck.surge.sh) | `surge_artifacts/paca-deck/` | `export_deck_data.py` (reads the other two pages' exports) |
 
 Both pages link to each other in their headers. The `/paca-agent` skill runs
 both deploy scripts at the end of every cycle, so after a trading day they
@@ -132,7 +133,28 @@ symbols × 930 bars). `NaN` becomes `null`.
   switching go blank in the first version.
 - Plotly is loaded from its CDN; surge sets no content-security policy.
 
-## Conventions shared by both pages
+## Case study deck
+
+**What it shows.** A 14-slide scroll-snap deck for the hackathon judges: the
+NVDA trade start to finish, the scoreboard, objectives, the architecture, one
+slide per component (signals, screener, decision layer, safety, risk, exits),
+the `/paca-agent` loop, the `/trading-review` skill, the learnings timeline and
+next steps. Arrow keys, space or the corner buttons move between slides; it
+also reads top to bottom. Same tokens and theme toggle as the other pages.
+
+**How `deploy.sh` builds it.** `export_deck_data.py` (read-only, stdlib only,
+no network) reads `logs/cycles.jsonl`, `logs/account.json`,
+`paca-cycles/realized.json`, `paca-cycles/config.json` and
+`paca-candles/data.json`, and writes `deck-data.json` (about 80 KB): account
+summary, per-day cycle stats and realized P&L, gate tally, screener rejection
+tally, the pick-to-order funnel, every closed trade joined to its journal exit
+reason and quoted debit, and a candle slice around each trade. Every number
+and chart on the page renders from that file; the prose carries only settings
+values (filled from `config.json`), commit dates and review quotes. Run
+`sh surge_artifacts/paca-deck/deploy.sh --refresh` to redeploy the other two
+pages first so the inputs are fresh.
+
+## Conventions shared by all three pages
 
 - **Source is tracked, data is not.** `.gitignore` excludes
   `surge_artifacts/*` and re-includes only `index.html`, `deploy.sh` and

@@ -29,3 +29,9 @@ surge_artifacts/paca-candles/*
 !surge_artifacts/paca-candles/index.html
 !surge_artifacts/paca-candles/deploy.sh
 !surge_artifacts/paca-candles/CNAME
+!surge_artifacts/paca-deck/
+surge_artifacts/paca-deck/*
+!surge_artifacts/paca-deck/index.html
+!surge_artifacts/paca-deck/deploy.sh
+!surge_artifacts/paca-deck/CNAME
+!surge_artifacts/paca-deck/export_deck_data.py
