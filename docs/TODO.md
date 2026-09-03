@@ -64,9 +64,19 @@ Still open, deliberately deferred:
   evidence supports it.
 - **Exit-mark quality** — stop/take-profit marks bypass `options_screener.check_leg`
   (cli.py exit path), so a stale or absurdly wide quote can trigger them.
-- **Pre-existing test failures (not from this work)** — the three
-  `tests/test_cli.py::test_cancel_*` tests fail on unmodified HEAD (fake trading
-  client never sees the cancel). Diagnose separately; the cancel CLI itself may be fine.
+- ~~**Pre-existing test failures (not from this work)** — the `test_cancel_*` tests
+  fail on unmodified HEAD.~~ **Resolved 2026-09-03:** root cause was the cancel loop
+  in `cli.py cancel` being commented out, so the command listed orders but never
+  called `broker.cancel_order`. Loop restored; all six cancel tests pass.
+
+## Applied from the 2026-09-02 trading review (2026-09-03)
+
+See `docs/trading_review.md` → "Review — 2026-09-02" for evidence. Applied:
+cancel CLI restored; stock quote-age check in `broker.fetch_spot_mids` (frozen
+IEX quotes now gate as `missing_quote`); pre-order vetoes logged via `_veto`;
+`paca-agent` skill guidance tightened on bare MACD crosses. Still deferred from
+that review: whitelist review of WMT and MSFT (both keep failing the liquidity
+screen and generate the most event churn) — use `/whitelist-candidates`.
 
 ## Context from the session (for reference)
 

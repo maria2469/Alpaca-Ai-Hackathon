@@ -213,9 +213,12 @@ class FakeStockDataClient:
         return SimpleNamespace(data=self.bars_by_symbol)
 
     def get_stock_latest_quote(self, request):
+        # (bid, ask) tuples are fresh as of NOW; a 3-tuple (bid, ask, stamp) sets the quote time.
         return {
-            symbol: SimpleNamespace(bid_price=bid, ask_price=ask)
-            for symbol, (bid, ask) in self.quotes_by_symbol.items()
+            symbol: SimpleNamespace(
+                bid_price=q[0], ask_price=q[1], timestamp=q[2] if len(q) > 2 else NOW
+            )
+            for symbol, q in self.quotes_by_symbol.items()
         }
 
 

@@ -308,7 +308,16 @@ def cancel_order(trading: Any, order_id: str) -> None:
     guarded("order cancel", lambda: trading.cancel_order_by_id(order_id))
 
 
-def fetch_spot_mids(stock_data: Any, symbols: tuple[str, ...]) -> dict[str, float | None]:
+def fetch_spot_mids(
+    stock_data: Any, symbols: tuple[str, ...], server_time: datetime | None = None
+) -> dict[str, float | None]:
+    """Latest quote mid per symbol; None when the quote is missing, crossed, or stale.
+
+    A stock quote older than MAX_QUOTE_AGE_SECONDS against the broker clock is
+    treated as missing (the caller gates it as `missing_quote`) — the same rule
+    options_screener.check_leg applies to option legs. On 2026-09-02 GLD's IEX
+    quote sat frozen at one price for 2.5 hours and passed every gate.
+    """
     request = StockLatestQuoteRequest(symbol_or_symbols=list(symbols), feed=STOCK_FEED)
     raw = guarded("quotes read", lambda: stock_data.get_stock_latest_quote(request))
     mids: dict[str, float | None] = {}
@@ -316,7 +325,21 @@ def fetch_spot_mids(stock_data: Any, symbols: tuple[str, ...]) -> dict[str, floa
         quote = raw.get(symbol)
         bid = as_float(getattr(quote, "bid_price", None))
         ask = as_float(getattr(quote, "ask_price", None))
-        mids[symbol] = (bid + ask) / 2 if bid and ask and 0 < bid <= ask else None
+        if not (bid and ask and 0 < bid <= ask):
+            mids[symbol] = None
+            continue
+        if server_time is not None:
+            stamp = getattr(quote, "timestamp", None)
+            if stamp is None:
+                mids[symbol] = None
+                continue
+            age = server_time.timestamp() - stamp.timestamp()
+            # Quotes are fetched after the clock read, so a fresh quote may slightly
+            # postdate server_time; only reject implausible or genuinely old stamps.
+            if age > settings.MAX_QUOTE_AGE_SECONDS or age < -settings.MAX_QUOTE_AGE_SECONDS:
+                mids[symbol] = None
+                continue
+        mids[symbol] = (bid + ask) / 2
     return mids
 
 

@@ -172,7 +172,7 @@ def run_cycle(
         dict.fromkeys(config.symbols + tuple(s.underlying for s in spreads))
     )
     try:
-        mids = broker.fetch_spot_mids(stock_data, watch_symbols)
+        mids = broker.fetch_spot_mids(stock_data, watch_symbols, clock.server_time)
     except broker.BrokerError as error:
         # Exits must still run on a quote outage; entries will gate out naturally.
         logger.error("quote read failed, exits still run, entries blocked: {}", error)
@@ -440,6 +440,15 @@ def _decide(
     return choice
 
 
+def _veto(entry: dict, reason: str) -> dict:
+    """Record a pre-order veto on the entry and say so in the log, not just the journal."""
+    entry["rejected"] = reason
+    logger.info(
+        "entry vetoed before submit: {} {} — {}", entry.get("symbol"), entry.get("direction"), reason
+    )
+    return entry
+
+
 def _attempt_entry(
     choice: EntryChoice,
     spot: float | None,
@@ -518,11 +527,9 @@ def _attempt_entry(
             option_data, [spread.long.symbol, spread.short.symbol]
         )
     except broker.BrokerError as error:
-        entry["rejected"] = f"recheck: {error}"
-        return entry
+        return _veto(entry, f"recheck: {error}")
     if {spread.long.symbol, spread.short.symbol} & fresh_account.open_order_symbols:
-        entry["rejected"] = "pending_order_conflict"
-        return entry
+        return _veto(entry, "pending_order_conflict")
     long_q = broker.leg_quote_from_snapshot(
         spread.long.symbol,
         spread.long.strike,
@@ -538,24 +545,19 @@ def _attempt_entry(
     for leg in (long_q, short_q):
         failure = options_screener.check_leg(leg, fresh_clock.server_time)
         if failure is not None:
-            entry["rejected"] = f"recheck: {failure}"
-            return entry
+            return _veto(entry, f"recheck: {failure}")
     fresh_debit = round(long_q.ask - short_q.bid, 2)  # type: ignore[operator]
     if not (settings.MIN_NET_DEBIT <= fresh_debit < spread.width):
-        entry["rejected"] = "recheck: bad_debit"
-        return entry
+        return _veto(entry, "recheck: bad_debit")
     if not (settings.MIN_DEBIT_FRAC * spread.width <= fresh_debit <= settings.MAX_DEBIT_FRAC * spread.width):
-        entry["rejected"] = "recheck: debit_out_of_band"
-        return entry
+        return _veto(entry, "recheck: debit_out_of_band")
     qty, reason = pos_and_risk.size_entry(
         fresh_debit, fresh_account.equity, open_risk, underlying_risk, cycle_spent=cycle_spent
     )
     if reason is not None:
-        entry["rejected"] = f"recheck: {reason}"
-        return entry
+        return _veto(entry, f"recheck: {reason}")
     if execute and (fresh_account.options_level or 0) < MIN_OPTIONS_LEVEL:
-        entry["rejected"] = "options_level_too_low"
-        return entry
+        return _veto(entry, "options_level_too_low")
 
     fresh_spread = SpreadQuote(
         underlying=spread.underlying,
@@ -804,13 +806,13 @@ def cancel(
     if not yes:
         typer.confirm(f"cancel {len(targets)} open order(s)?", abort=True)
     failed = False
-    # for oid, label in targets.items():
-    #     try:
-    #         broker.cancel_order(trading, oid)
-    #         typer.echo(f"cancel requested: {oid}  {label}")
-    #     except broker.BrokerError as error:
-    #         failed = True
-    #         typer.echo(f"FAIL {oid}  {label}: {error}")
+    for oid, label in targets.items():
+        try:
+            broker.cancel_order(trading, oid)
+            typer.echo(f"cancel requested: {oid}  {label}")
+        except broker.BrokerError as error:
+            failed = True
+            typer.echo(f"FAIL {oid}  {label}: {error}")
     if failed:
         raise typer.Exit(1)
 
@@ -821,7 +823,7 @@ def candidates() -> None:
     setup_logging()
     config, trading, stock_data, _ = _bootstrap()
     clock = broker.fetch_clock(trading)
-    mids = broker.fetch_spot_mids(stock_data, config.symbols)
+    mids = broker.fetch_spot_mids(stock_data, config.symbols, clock.server_time)
     features = _build_trading_signals(
         config.symbols, config, stock_data, mids, clock.server_time
     )
@@ -852,7 +854,7 @@ def screen(
     config, trading, stock_data, option_data = _bootstrap()
     clock = broker.fetch_clock(trading)
     symbol = symbol.upper()
-    spot = broker.fetch_spot_mids(stock_data, (symbol,))[symbol]
+    spot = broker.fetch_spot_mids(stock_data, (symbol,), clock.server_time)[symbol]
     if spot is None:
         typer.echo("no usable underlying quote")
         raise typer.Exit(1)

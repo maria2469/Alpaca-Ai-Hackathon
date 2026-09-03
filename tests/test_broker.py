@@ -213,3 +213,25 @@ def test_account_state_sees_sdk_enum_positions():
     state = broker.fetch_account_state(FakeTradingClient(positions=positions), ("SPY",))
     assert [leg.qty for leg in state.legs] == [2, -2]  # seen, and shorts negative
     assert state.unparsed_positions == ()
+
+
+def test_fetch_spot_mids_drops_stale_quotes():
+    """A frozen IEX stock quote (GLD sat at 400.66 for 2.5 h on 2026-09-02) must not
+    produce a spot mid; it gates as missing_quote instead of centering the chain."""
+    from datetime import timedelta
+
+    from tests.fakes import NOW, FakeStockDataClient
+
+    stock = FakeStockDataClient(
+        quotes_by_symbol={
+            "SPY": (649.9, 650.1),                                   # fresh (stamped NOW)
+            "GLD": (400.6, 400.72, NOW - timedelta(hours=2, minutes=30)),  # frozen
+            "USO": (140.8, 140.91, NOW + timedelta(seconds=3)),      # fetched just after the clock read
+        }
+    )
+    mids = broker.fetch_spot_mids(stock, ("SPY", "GLD", "USO"), server_time=NOW)
+    assert mids["SPY"] == 650.0
+    assert mids["GLD"] is None
+    assert mids["USO"] == pytest.approx(140.855)
+    # Without a server clock the age check is skipped (legacy callers still get a mid).
+    assert broker.fetch_spot_mids(stock, ("GLD",))["GLD"] == pytest.approx(400.66)

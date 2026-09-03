@@ -35,6 +35,7 @@ If the market is closed or no candidate passes its gate, skip to Step 3 and run 
 Evaluate every gate-passing candidate with fired events. For each, reason explicitly about:
 
 - **Event quality**: a gap or breakout beyond 2 ATR is a strong impulse; a bare MACD zero-cross is weaker confirmation-only evidence.
+- **Bare MACD crosses need a second leg to stand on.** On 2026-09-02 every losing or vetoed pick was a `macd_cross_*` with no other event, taken on a "trend resumption" or "broad rollover" story, while the passes that cited whipsaw or trend disagreement were right 22 times out of 22. Do not take a cross alone. It qualifies only with at least one of: a same-bar gap/breakout; price on the event's side of **both** EMAs (`ema25`/`ema50` columns) with |hist|/ATR ≥ 0.10; or a clearly stated higher-timeframe reason. Never take a second cross in the same direction on the same symbol within a session — the first one already told you the name is oscillating.
 - **Trend confirmation**: does the MACD histogram's sign and magnitude agree with the event direction?
 - **Exhaustion risk**: extreme RSI *against* the move (e.g. RSI > 70 on a gap_up) argues the move is spent — momentum traders chase strength, not tops. Conflicting events on the same bar are a reason to pass.
 - **Volatility context**: ATR relative to price — enough range to pay for a debit spread, not so wild that the spread quotes will be junk.
