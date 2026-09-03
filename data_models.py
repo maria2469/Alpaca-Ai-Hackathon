@@ -122,6 +122,7 @@ class OpenSpread:
     short_symbol: str
     qty: int  # spread quantity (positive)
     net_entry_debit: float | None  # per share; None = unknown, blocks stop/TP math
+    width: float | None = None  # per share strike width; None = unknown, skips the width TP trigger
 
 
 @dataclass(frozen=True)

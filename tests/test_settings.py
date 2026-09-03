@@ -40,6 +40,7 @@ def broken(mutate) -> dict:
         (lambda r: r.update(unexpected_section=1), "unexpected_section"),
         (lambda r: r["exits"].update(stop_fraction=5), "exits.stop_fraction"),
         (lambda r: r["exits"].update(take_profit_mult=0.5), "exits.take_profit_mult"),
+        (lambda r: r["exits"].update(take_profit_width_frac=1.5), "exits.take_profit_width_frac"),
         (lambda r: r["risk"].update(total_fraction="lots"), "risk.total_fraction"),
         (lambda r: r["risk"].update(per_entry_fraction=0.03), "risk.per_entry_fraction"),  # > per_underlying
         (lambda r: r["risk"].update(per_underlying_fraction=0.2), "risk.per_underlying_fraction"),  # > total

@@ -95,7 +95,7 @@ _SCREENER_KEYS = {"min_dte", "max_expiry_lookahead_days", "expiries_to_screen",
                   "min_debit_frac", "max_debit_frac"}
 _RISK_KEYS = {"per_entry_fraction", "per_underlying_fraction", "per_cycle_fraction",
               "total_fraction", "allow_stacking"}
-_EXIT_KEYS = {"stop_fraction", "take_profit_mult", "exit_dte", "reversal_exit"}
+_EXIT_KEYS = {"stop_fraction", "take_profit_mult", "take_profit_width_frac", "exit_dte", "reversal_exit"}
 _LLM_KEYS = {"primary_model", "fallback_models"}
 
 
@@ -182,6 +182,9 @@ def validate(raw: object) -> dict[str, object]:
     exits = _section(raw, "exits", _EXIT_KEYS)
     values["STOP_FRACTION"] = _number(exits, "exits", "stop_fraction", 0, 1, lo_open=True, hi_open=True)
     values["TAKE_PROFIT_MULT"] = _number(exits, "exits", "take_profit_mult", 1, lo_open=True)
+    values["TAKE_PROFIT_WIDTH_FRAC"] = _number(
+        exits, "exits", "take_profit_width_frac", 0, 1, lo_open=True, hi_open=True
+    )
     values["EXIT_DTE"] = _integer(exits, "exits", "exit_dte", 0)
     if not isinstance(exits["reversal_exit"], bool):
         _fail("exits.reversal_exit", "must be true or false", exits["reversal_exit"])
@@ -253,6 +256,7 @@ TOTAL_FRACTION: float = _VALUES["TOTAL_FRACTION"]  # type: ignore[assignment]
 ALLOW_STACKING: bool = _VALUES["ALLOW_STACKING"]  # type: ignore[assignment]
 STOP_FRACTION: float = _VALUES["STOP_FRACTION"]  # type: ignore[assignment]
 TAKE_PROFIT_MULT: float = _VALUES["TAKE_PROFIT_MULT"]  # type: ignore[assignment]
+TAKE_PROFIT_WIDTH_FRAC: float = _VALUES["TAKE_PROFIT_WIDTH_FRAC"]  # type: ignore[assignment]
 EXIT_DTE: int = _VALUES["EXIT_DTE"]  # type: ignore[assignment]
 REVERSAL_EXIT: bool = _VALUES["REVERSAL_EXIT"]  # type: ignore[assignment]
 PRIMARY_MODEL: str = _VALUES["PRIMARY_MODEL"]  # type: ignore[assignment]

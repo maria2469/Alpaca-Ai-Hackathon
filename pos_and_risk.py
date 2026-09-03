@@ -87,6 +87,7 @@ def pair_spreads(
                     short_symbol=short_leg.symbol,
                     qty=long_leg.qty,
                     net_entry_debit=net_entry_debit,
+                    width=abs(short_leg.strike - long_leg.strike),
                 )
             )
         leftovers.extend(free_shorts)
@@ -129,7 +130,10 @@ def exit_decision(
 ) -> ExitDecision | None:
     """Mechanical exit verdict for one open spread, or None to keep holding.
 
-    Precedence: expiry, reversal, stop, take-profit. Expiry (DTE <=
+    Precedence: expiry, reversal, stop, take-profit. Take-profit fires at the
+    lower of TAKE_PROFIT_MULT x entry debit and TAKE_PROFIT_WIDTH_FRAC x strike
+    width (mark/width ~ implied probability of a full payoff, so the width rule
+    means the same remaining reward:risk on every spread). Expiry (DTE <=
     settings.EXIT_DTE) and reversal (an entry event against the spread, if
     settings.REVERSAL_EXIT) exit even on missing marks or unknown entry debit —
     they are signal-based. Stop and take-profit need both a known entry debit
@@ -150,7 +154,10 @@ def exit_decision(
         return None
     if net_mark <= settings.STOP_FRACTION * spread.net_entry_debit:
         return ExitDecision(spread=spread, reason="stop", net_mark=net_mark)
-    if net_mark >= settings.TAKE_PROFIT_MULT * spread.net_entry_debit:
+    tp_debit = settings.TAKE_PROFIT_MULT * spread.net_entry_debit
+    tp_width = settings.TAKE_PROFIT_WIDTH_FRAC * spread.width if spread.width is not None else None
+    target = tp_debit if tp_width is None else min(tp_debit, tp_width)
+    if net_mark >= target:
         return ExitDecision(spread=spread, reason="take_profit", net_mark=net_mark)
     return None
 

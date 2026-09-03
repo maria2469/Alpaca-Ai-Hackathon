@@ -116,7 +116,10 @@ the full review, evidence and rationale are in
   = one spread per underlying); the per-underlying cap sizes the add, and the
   add never reuses a held leg.
 - **Exits (mechanical only, before entries, every cycle)**: close the spread
-  when net mark ≤ −50% of entry debit, ≥ +100%, DTE ≤ 2, or — the **reversal
+  when net mark ≤ −50% of entry debit, ≥ 3× entry debit **or** ≥ 65% of the
+  strike width (whichever is lower; mark/width ≈ implied probability of a full
+  payoff, so the width rule means the same remaining reward:risk on every
+  spread), DTE ≤ 2, or — the **reversal
   exit** (`reversal_exit: true`) — when an entry event fires *against* the
   spread's direction on its underlying (e.g. `gap_down` while holding a call
   spread). Precedence: expiry → reversal → stop → take-profit; reversal, like

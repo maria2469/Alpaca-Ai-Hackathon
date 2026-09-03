@@ -19,6 +19,7 @@ def pinned_settings(monkeypatch):
     monkeypatch.setattr(settings, "TOTAL_FRACTION", 0.10)
     monkeypatch.setattr(settings, "STOP_FRACTION", 0.5)
     monkeypatch.setattr(settings, "TAKE_PROFIT_MULT", 2.0)
+    monkeypatch.setattr(settings, "TAKE_PROFIT_WIDTH_FRAC", 0.65)
     monkeypatch.setattr(settings, "EXIT_DTE", 2)
 
 
@@ -147,10 +148,11 @@ def test_pair_spreads_reports_only_the_leftover_legs():
 
 # --- mechanical exits ---
 
-def spread(debit=2.0, expiration=EXP, underlying="SPY", qty=1):
+def spread(debit=2.0, expiration=EXP, underlying="SPY", qty=1, width=10.0):
+    # default width 10: 0.65 x width = 6.5 > 2.0 x debit = 4.0, so the debit rule binds
     return OpenSpread(
         underlying=underlying, expiration=expiration, option_type="C",
-        long_symbol="L", short_symbol="S", qty=qty, net_entry_debit=debit,
+        long_symbol="L", short_symbol="S", qty=qty, net_entry_debit=debit, width=width,
     )
 
 
@@ -164,6 +166,23 @@ def test_exit_at_exact_take_profit_threshold():
     # entry debit 2.00, TP at mark >= 4.00 (pinned 2.0x; settings.yaml may differ)
     decision = pos_and_risk.exit_decision(spread(), quote(4.9, 5.1), quote(0.9, 1.1), TODAY)
     assert decision is not None and decision.reason == "take_profit" and decision.net_mark == 4.0
+
+
+def test_take_profit_width_trigger_fires_below_debit_multiple():
+    # debit 2.0, width 5: width trigger 0.65 x 5 = 3.25 is below the debit trigger 2.0 x 2 = 4.0
+    tsla_like = spread(debit=2.0, width=5.0)
+    at_width = pos_and_risk.exit_decision(tsla_like, quote(4.2, 4.3), quote(0.95, 1.05), TODAY)
+    assert at_width is not None and at_width.reason == "take_profit"
+    assert at_width.net_mark == pytest.approx(3.25)
+    below = pos_and_risk.exit_decision(tsla_like, quote(4.1, 4.2), quote(0.95, 1.05), TODAY)
+    assert below is None  # 3.15 < 3.25
+
+
+def test_take_profit_without_width_uses_debit_multiple_only():
+    no_width = spread(debit=2.0, width=None)
+    assert pos_and_risk.exit_decision(no_width, quote(4.2, 4.3), quote(0.95, 1.05), TODAY) is None
+    hit = pos_and_risk.exit_decision(no_width, quote(4.9, 5.1), quote(0.9, 1.1), TODAY)
+    assert hit is not None and hit.reason == "take_profit" and hit.net_mark == 4.0
 
 
 def test_hold_between_thresholds():
