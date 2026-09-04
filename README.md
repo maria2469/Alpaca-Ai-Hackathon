@@ -95,7 +95,9 @@ Deeper studies behind individual rules: spread ranking and its worked example
 in [docs/SPREAD_SELECTION.md](docs/SPREAD_SELECTION.md); the take-profit
 rule and its TSLA example in [docs/TAKE_PROFIT.md](docs/TAKE_PROFIT.md); the
 day-by-day evidence for every revision in
-[docs/trading_review.md](docs/trading_review.md).
+[docs/trading_review.md](docs/trading_review.md). What the other 426 teams
+built, categorized from their lablab summaries, is in
+[docs/HACKATHON_SUBMISSIONS.md](docs/HACKATHON_SUBMISSIONS.md).
 
 ## Safety rules this code enforces
 
