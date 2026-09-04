@@ -16,7 +16,14 @@ spreads** as single multi-leg (MLEG) limit orders. Exits are purely mechanical.
 >   — every spread's entry and exit drawn over 5m candles with the RSI/ATR/MACD
 >   signals, EMA 11/22, and the bars where entry events fired.
 >
-> How both pages are exported and deployed: [docs/DASHBOARDS.md](docs/DASHBOARDS.md).
+> **Presentation** for the hackathon judges:
+> - [alpaca-hackathon-2026-artifacts-paca-deck.surge.sh](https://alpaca-hackathon-2026-artifacts-paca-deck.surge.sh)
+>   — the case-study deck: 14 slides, every number rendered from the live
+>   trading data.
+> - [alpaca-hackathon-2026-artifacts-paca-video.surge.sh](https://alpaca-hackathon-2026-artifacts-paca-video.surge.sh)
+>   — the recorded video walkthrough of the deck.
+>
+> How the pages are exported and deployed: [docs/DASHBOARDS.md](docs/DASHBOARDS.md).
 
 > **Full rewrite (2026-08-31).** The previous phased single-underlying package
 > (`src/regimepilot/`) was replaced with 7 flat modules. The old code lives in
