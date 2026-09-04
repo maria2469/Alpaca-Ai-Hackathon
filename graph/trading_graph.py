@@ -52,16 +52,6 @@ class TradingGraph:
 
         return workflow.compile(checkpointer=self.checkpointer)
 
-    def save_graph_image(self, output_path: str = "assets/langgraph_architecture.png") -> None:
-        """Render and save the actual LangGraph StateGraph as a PNG file."""
-        try:
-            png_bytes = self.graph.get_graph().draw_mermaid_png()
-            with open(output_path, "wb") as f:
-                f.write(png_bytes)
-            logger.info(f"LangGraph: Saved architecture diagram to {output_path}")
-        except Exception as e:
-            logger.warning(f"LangGraph: Could not render graph PNG: {e}")
-    
     async def _market_scanner_node(self, state: AgentState) -> AgentState:
         """Market scanner agent node with performance monitoring."""
         start_time = datetime.utcnow()
