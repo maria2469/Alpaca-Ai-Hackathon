@@ -30,83 +30,7 @@ An options trading system built for the [**Alpaca AI Trading Agents Hackathon**]
 
 ## 🏛️ System Architecture
 
-### Multi-Agent Pipeline with Multi-Turn Reasoning
-
-```mermaid
-flowchart TD
-    subgraph S1["1. MARKET SCANNER AGENT"]
-        S_DATA["Parallel Alpaca OHLCV Data (15 Whitelisted Symbols)"]
-        S_IND["RSI(14) • ATR(14) • MACD(12/26/9) • EMA(25/50)"]
-        S_EVT["Technical Events (gap_up, breakout, macd_cross)"]
-        S_DATA --> S_IND --> S_EVT
-    end
-
-    subgraph S2["2. REGIME AGENT"]
-        R_CLASS["Deterministic Classification"]
-        R_TYPES["trending_up • trending_down • high_vol_chop • low_vol_drift"]
-        R_CLASS --> R_TYPES
-    end
-
-    subgraph S3["3. DECISION AGENT - MOMENTUM TRADER (Multi-Turn LLM Reasoning)"]
-        MT_COLLECT["Step 1: Candidate Collection"]
-        MT_QUANT["Step 2: Quantitative Pre-filter (Edge Score ≥ 0.55)"]
-        MT_CONTEXT["Step 3: Context Integration (Lessons, Mistakes, Scratchpad)"]
-        MT_LLM["Step 4: LLM Decision (Gemini)"]
-        MT_SUMMARY["Step 5: Decision Summary & Trace"]
-        MT_COLLECT --> MT_QUANT --> MT_CONTEXT --> MT_LLM --> MT_SUMMARY
-    end
-
-    subgraph S4["4. OPTIONS TRADER (Deterministic)"]
-        OT_CONFIRM["Confirm Momentum Decision"]
-        OT_SCREEN["Deterministic Spread Selection (options_screener.py)"]
-        OT_OPT["EV Optimization: Strike/Expiry/Size"]
-        OT_CONFIRM --> OT_SCREEN --> OT_OPT
-    end
-
-    subgraph S5["5. PORTFOLIO RISK GATE"]
-        RG_SIZING["4-Tier Fractional Sizing (pos_and_risk.py)"]
-        RG_GREEKS["Portfolio Greeks (|Δ| ≤ 50, Net Decay)"]
-        RG_CLUSTER["Tech Cluster Exposure Cap (≤ 4% Equity)"]
-        RG_CIRCUIT["Daily Drawdown Circuit Breaker (≥ 2.5%)"]
-        RG_SIZING & RG_GREEKS & RG_CLUSTER & RG_CIRCUIT
-    end
-
-    subgraph S6["6. EXECUTION AGENT"]
-        EX_PEG["Limit Price Pegging (Natural vs Mid Debit)"]
-        EX_SLIP["Slippage Control & Basis Point Bounds"]
-        EX_ROUTE["Alpaca MLEG Order Routing"]
-        EX_FILL["Cancel/Replace Progression & Fill Tracking"]
-        EX_PEG --> EX_SLIP --> EX_ROUTE --> EX_FILL
-    end
-
-    subgraph S7["7. POSITION MANAGER AGENT"]
-        PM_PNL["Real-Time Mark-to-Market PnL Tracking"]
-        PM_DTE["Time Stop (DTE ≤ 2 days Expiry Exit)"]
-        PM_TP["Profit Target (Net Mark ≥ 3.0x Debit)"]
-        PM_STOP["Stop-Loss Protection (Net Mark ≤ 0.5x Debit)"]
-        PM_REV["Thesis Invalidation (Opposing Events Reversal)"]
-        PM_PNL --> PM_DTE & PM_TP & PM_STOP & PM_REV
-    end
-
-    subgraph S8["8. TRADE MEMORY & ANALYTICS AGENT"]
-        TM_TRACE["Lifecycle Trace: Prediction → Decision → Execution → Outcome"]
-        TM_CALIB["Signal Calibration & Win Rate Attribution (by Event & Regime)"]
-        TM_MISTAKE["Agent Mistake Detection & False Breakout Log"]
-        TM_LLM["Google Gemini Autonomous Post-Mortem Reflection"]
-        TM_CYCLE["Write to cycles.jsonl for Dashboard"]
-        TM_TRACE --> TM_CALIB --> TM_MISTAKE --> TM_LLM --> TM_CYCLE
-    end
-
-    S1 -->|Features & Opportunities| S2
-    S2 -->|Regime Classification| S3
-    S3 -->|Symbol + Direction| S4
-    S4 -->|Spread Plan| S5
-    S5 -->|Approved OrderPlan| S6
-    S6 -->|Filled Leg Positions| S7
-    S7 -->|Realized Outcomes| S8
-    S8 -.->|Feedback Loop: Lesson & Mistake Injection| S3
-    S8 -.->|Feedback Loop: Calibration Weights| S1
-```
+![PACA Multi-Agent Architecture](assets/architecture.png)
 
 ---
 
@@ -244,38 +168,54 @@ uv run --env-file .env pnl.py realized [--json] [--days 30]
 uv run --env-file .env python export_candles.py --days 10
 ```
 
-### 5. Running Trading Cycles
+### 5. Running Trading Cycles (Multi-Agent System)
 
-**Live paper execution uses the deterministic procedural CLI (`cli.py`), not the multi-agent architecture.**
+The autonomous **Multi-Agent System** (`TradingGraph` + 7 specialized agents) is the primary engine for live paper trading and simulation.
 
-#### Dry-Run Simulation (Safe Mode)
+#### Continuous Live Paper Trading (Armed Mode)
+Run the autonomous multi-agent live trading loop on Alpaca paper endpoint:
 ```bash
-# Deterministic CLI dry-run (interactive manual pick or pass)
-uv run --env-file .env cli.py run --manual-mode
+# Launch armed live paper trading loop (continuous execution across market hours)
+uv run --env-file .env multi_agent_cli.py live
 
-# Multi-agent pipeline performance dry-run (for testing/benchmarking only)
-uv run --env-file .env python multi_agent_cli.py test-performance
+# Alternatively via the standard run command with execute and loop flags
+uv run --env-file .env multi_agent_cli.py run --execute --loop
+
+# Or via cli.py (which defaults to the multi-agent engine)
+uv run --env-file .env cli.py live
 ```
 
-#### Live Paper Execution (Deterministic CLI)
+#### Single Cycle Execution
 ```bash
-# Single cycle execution (submits real paper orders via MLEG limit)
-uv run --env-file .env cli.py run --manual-mode --execute
+# Submit live paper orders for one multi-agent cycle
+uv run --env-file .env multi_agent_cli.py run --execute
 
-# Autonomous loop running every bar interval (5 minutes)
-uv run --env-file .env cli.py run --execute --loop
+# Dry-run simulation (full 7-agent pipeline with zero money at risk)
+uv run --env-file .env multi_agent_cli.py run
 ```
 
-### 6. Multi-Agent Testing & Benchmarking (No Live Trading)
+#### Account & Real-Time Position Management
 ```bash
-# Benchmark multiple cycles to measure latency and agent throughput
-uv run --env-file .env python multi_agent_cli.py benchmark --cycles 5
+# Inspect live account equity, buying power, options level, and active positions
+uv run --env-file .env multi_agent_cli.py account
 
-# Analyze latency bottlenecks and timeout risks across the agents
-uv run --env-file .env python multi_agent_cli.py analyze-bottlenecks
+# Inspect agent latency, bottlenecks, historical win rate, and post-mortem lessons
+uv run --env-file .env multi_agent_cli.py status
 
-# Benchmark multi-agent vs procedural mode
-uv run --env-file .env python multi_agent_cli.py compare-modes
+# Inspect market scanner opportunities across whitelist
+uv run --env-file .env multi_agent_cli.py candidates
+```
+
+### 6. Performance Benchmarking & Profiling
+```bash
+# Benchmark multiple multi-agent cycles
+uv run --env-file .env multi_agent_cli.py benchmark --cycles 5
+
+# Analyze latency bottlenecks and agent execution profiles
+uv run --env-file .env multi_agent_cli.py analyze-bottlenecks
+
+# Compare multi-agent vs procedural performance
+uv run --env-file .env multi_agent_cli.py compare-modes
 ```
 
 ---
@@ -307,12 +247,12 @@ paca/
 ├── surge_artifacts/           # Surge.sh dashboard deployments
 │   ├── paca-cycles/          # Cycle monitor dashboard
 │   └── paca-candles/         # Candlestick chart dashboard
-├── tests/                     # Test suite
+├── tests/                     # Test suite (276 tests)
 ├── .claude/                   # Claude Code skills
 │   └── skills/                # Specialized skills for this project
 ├── broker.py                  # Alpaca API gateway
-├── cli.py                     # Main CLI interface
-├── multi_agent_cli.py         # Multi-agent CLI with performance profiling
+├── cli.py                     # CLI interface (defaults to multi-agent engine)
+├── multi_agent_cli.py         # Multi-agent CLI and live paper trading hub
 ├── market_data.py             # Market data fetching
 ├── signals.py                 # Technical analysis & event detection
 ├── decision_layer.py          # LLM decision layer
@@ -368,30 +308,33 @@ The repository includes specialized Claude Code skills in `.claude/skills/`:
 
 ## 🔄 Workflow
 
-### Live Paper Trading (Deterministic CLI)
+### Autonomous Multi-Agent Live Trading (`multi_agent_cli.py` / `cli.py`)
 
-Uses `cli.py` - sequential procedural execution with the same deterministic logic:
+The system operates as an end-to-end autonomous LangGraph multi-agent loop:
 
-1. Fetch market data and account state
-2. Calculate indicators and detect events
-3. Run LLM decision or manual mode
-4. Screen spreads and apply risk sizing
-5. Submit orders via Alpaca MLEG
-6. Monitor positions and execute mechanical exits
-7. Write to cycles.jsonl for dashboard
+1. **Market Scanner**: Parallel OHLCV ingestion + account equity & clock pre-fetch + indicator computation across 15 symbols.
+2. **Momentum Trader**: Multi-turn LLM reasoning (candidate collection, quantitative edge filter, lesson injection, consensus choice).
+3. **Options Trader**: Deterministic vertical spread selection and EV optimization.
+4. **Portfolio Risk Gate**: 4-tier risk budget validation, Greeks constraints, tech cluster limit (≤4%), and 2.5% drawdown circuit breaker.
+5. **Execution Agent**: Natural/mid debit limit price pegging, slippage bounds, Alpaca MLEG order formatting and submission.
+6. **Position Manager**: Real-time mark-to-market PnL tracking, DTE time stop (≤2 DTE), profit targets (≥3.0x), stop-losses (≤0.5x), and automated MLEG exit order execution.
+7. **Trade Memory & Analytics**: Lifecycle trace logging to `logs/trade_memory.jsonl` and `logs/cycles.jsonl`, win rate calibration, and feedback loops back into the decision layer.
 
-### Multi-Agent Testing (multi_agent_cli.py)
+### Development & Operational Workflow
 
-Used for architecture demonstration and benchmarking only - does not execute live trades:
-
-1. Market Scanner → Regime → Decision (Momentum Trader) → Options Trader → Risk Gate → Execution → Position Manager → Trade Memory
-2. All agents share AgentState
-3. Performance monitoring and bottleneck detection
-
-### Development Workflow
-
-1. **Configuration**: Edit `settings.yaml`
-2. **Testing**: Run `uv run pytest` (270 tests)
-3. **Preflight**: Run `uv run --env-file .env cli.py preflight`
-4. **Dry-Run**: Test with `uv run --env-file .env cli.py run --manual-mode`
-5. **Live Trading**: Execute with `uv run --env-file .env cli.py run --execute --loop`
+1. **Preflight**: Verify credentials and market connectivity:
+   ```bash
+   uv run --env-file .env cli.py preflight
+   ```
+2. **Test Suite**: Run full offline test suite (276 tests):
+   ```bash
+   uv run pytest
+   ```
+3. **Dry-Run**: Test multi-agent cycle in safe simulation mode:
+   ```bash
+   uv run --env-file .env multi_agent_cli.py run
+   ```
+4. **Live Paper Trading**: Launch continuous autonomous live trading:
+   ```bash
+   uv run --env-file .env multi_agent_cli.py live
+   ```

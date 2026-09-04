@@ -170,21 +170,28 @@ class MarketScannerAgent(BaseAgent):
                 logger.debug(traceback.format_exc())
                 return None
 
-        def prefetch_account_state() -> Optional[object]:
-            """Pre-fetch Alpaca account state in parallel with bar collection — zero extra wall time."""
+        def prefetch_account_and_clock() -> tuple[Optional[object], Optional[bool]]:
+            """Pre-fetch Alpaca account state and market clock in parallel."""
             if trading is None:
-                return None
+                return None, None
+            acct = None
+            is_open = None
             try:
                 import settings as _s
-                return broker.fetch_account_state(trading, _s.SYMBOLS)
+                acct = broker.fetch_account_state(trading, _s.SYMBOLS)
             except Exception as e:
                 logger.debug(f"Account prefetch: {e}")
-                return None
+            try:
+                clock = broker.fetch_clock(trading)
+                is_open = clock.is_open
+            except Exception as e:
+                logger.debug(f"Clock prefetch: {e}")
+            return acct, is_open
         
         # Execute all symbols + account prefetch in parallel — account fetch piggybacks
         # on the same network window as bar collection at zero marginal wall-clock cost.
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(symbols) + 1) as executor:
-            account_future = executor.submit(prefetch_account_state)
+            account_future = executor.submit(prefetch_account_and_clock)
             symbol_futures = [executor.submit(process_symbol, sym) for sym in symbols]
             
             for future in concurrent.futures.as_completed(symbol_futures):
@@ -194,12 +201,16 @@ class MarketScannerAgent(BaseAgent):
                     market_snapshots[sym] = snapshot
                     symbol_features[sym] = features
             
-            # Store pre-fetched account state — downstream agents read this, never re-fetch
+            # Store pre-fetched account state & clock — downstream agents read this, never re-fetch
             try:
-                acct = account_future.result(timeout=5.0)
+                acct, is_open = account_future.result(timeout=5.0)
                 if acct is not None:
                     state.account_state = acct
                     logger.debug("Market Scanner: Account state pre-fetched and cached in AgentState")
+                if is_open is not None:
+                    state.market_open = is_open
+                    if not is_open:
+                        logger.info("Market Scanner: Market is currently closed according to Alpaca clock")
             except Exception:
                 pass
         

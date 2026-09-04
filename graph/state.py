@@ -305,6 +305,7 @@ class AgentState:
     cycle_id: str = ""
     timestamp: datetime = field(default_factory=datetime.utcnow)
     dry_run: bool = True
+    market_open: bool = True
     
     def add_perspective(self, perspective: AgentPerspective) -> None:
         """Add an agent's perspective to the state."""

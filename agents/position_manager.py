@@ -34,6 +34,9 @@ import sounds
 import settings
 
 
+_RECENT_EXITS: Dict[str, float] = {}
+
+
 class PositionManagerAgent(BaseAgent):
     """Real-time position management agent with mechanical exits and momentum health tracking."""
     
@@ -68,6 +71,7 @@ class PositionManagerAgent(BaseAgent):
                     f"Position Manager: {len(report.exits_triggered)} exit(s) triggered: "
                     f"{[f'{p.spread_label} ({p.exit_reason})' for p in report.exits_triggered]}"
                 )
+                self._execute_exits(report.exits_triggered, state)
             else:
                 logger.info(
                     f"Position Manager: {report.total_positions} active position(s) healthy | "
@@ -84,6 +88,66 @@ class PositionManagerAgent(BaseAgent):
             state.add_bottleneck(f"Position Manager exception: {str(e)}")
 
         return state
+
+    def _execute_exits(self, exits: List[ManagedPosition], state: AgentState) -> None:
+        """Submit MLEG exit orders for triggered positions (live paper or dry run)."""
+        dry_run = getattr(state, "dry_run", True)
+        trading, _ = self._get_clients()
+
+        for pos in exits:
+            if not pos.exit_plan:
+                continue
+
+            now_ts = time.monotonic()
+            _RECENT_EXITS[pos.underlying] = now_ts
+            try:
+                import cli
+                cli._RECENT_EXITS[pos.underlying] = now_ts
+            except Exception:
+                pass
+
+            if dry_run:
+                logger.info(
+                    f"Position Manager (DRY-RUN): Simulated exit for {pos.spread_label} "
+                    f"({pos.exit_reason}) @ limit ${pos.exit_plan.limit_price:.2f}"
+                )
+                state.execution_receipts.append({
+                    "submitted": False,
+                    "dry_run": True,
+                    "kind": "exit",
+                    "spread": pos.spread_label,
+                    "reason": pos.exit_reason,
+                    "client_order_id": pos.exit_plan.client_order_id,
+                    "limit_price": pos.exit_plan.limit_price,
+                    "qty": pos.exit_plan.qty,
+                })
+            else:
+                if trading is None:
+                    logger.error(f"Position Manager: Trading client unavailable for exit {pos.spread_label}")
+                    continue
+                logger.info(
+                    f"Position Manager (LIVE): Submitting exit order {pos.exit_plan.client_order_id} "
+                    f"for {pos.spread_label} ({pos.exit_reason})"
+                )
+                receipt = broker.submit_paper_order(trading, pos.exit_plan)
+                if receipt.submitted:
+                    sounds.play_order_sound()
+                    logger.info(f"Position Manager: Exit order submitted: {receipt.order_id} ({receipt.status})")
+                else:
+                    logger.error(f"Position Manager: Exit order rejected: {receipt.error}")
+                state.execution_receipts.append({
+                    "submitted": receipt.submitted,
+                    "dry_run": False,
+                    "kind": "exit",
+                    "spread": pos.spread_label,
+                    "reason": pos.exit_reason,
+                    "order_id": receipt.order_id,
+                    "client_order_id": pos.exit_plan.client_order_id,
+                    "limit_price": pos.exit_plan.limit_price,
+                    "qty": pos.exit_plan.qty,
+                    "status": receipt.status,
+                    "error": receipt.error,
+                })
 
     def _evaluate_open_positions(
         self, state: AgentState, mock_account: Optional[data_models.AccountState] = None

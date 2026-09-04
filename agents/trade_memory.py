@@ -297,36 +297,55 @@ class TradeMemoryAgent(BaseAgent):
     def _write_cycles_journal(self, state: AgentState, record: TradeMemoryRecord) -> None:
         """Write cycle record to cycles.jsonl for dashboard compatibility (matches cli.py format)."""
         try:
+            dry_run = getattr(state, "dry_run", True)
+            market_open = getattr(state, "market_open", True)
+            equity = state.account_state.equity if state.account_state else None
+            options_level = state.account_state.options_level if state.account_state else None
+            open_spreads = [p.spread_label for p in state.active_positions] if state.active_positions else []
+
+            # Extract exits and entries from execution_receipts
+            entries = []
+            exits = []
+            for r in getattr(state, "execution_receipts", []):
+                if isinstance(r, dict):
+                    if r.get("kind") == "exit":
+                        exits.append(r)
+                    else:
+                        entries.append(r)
+
+            outcome = record.execution_status.lower() if record.execution_status else "hold"
+            if getattr(state, "execution_plan", None):
+                plan_status = state.execution_plan.status.lower()
+                if plan_status in ("submitted", "planned", "filled", "rejected", "hold"):
+                    outcome = plan_status
+
             # Build cycles record matching cli.py format
             cycles_record = {
                 "cycle_id": record.cycle_id,
                 "started_at": record.timestamp.isoformat() if record.timestamp else None,
                 "symbol": record.symbol,
                 "action": record.action.lower(),
-                "dry_run": False,  # Agentic cycles are not dry runs
-                "market_open": True,  # Assume market open during agentic cycles
-                "equity": None,  # Not available in agent state
-                "options_level": None,  # Not available in agent state
-                "open_spreads": [],  # Simplified - could be enhanced from state
+                "dry_run": dry_run,
+                "market_open": market_open,
+                "equity": equity,
+                "options_level": options_level,
+                "open_spreads": open_spreads,
                 "open_risk": record.portfolio_risk,
-                "warnings": [],
-                "entries": [],
-                "exits": [],
-                "outcome": record.execution_status.lower() if record.execution_status else "hold",
-                "hold_reason": None,
+                "warnings": state.bottlenecks if hasattr(state, "bottlenecks") else [],
+                "entries": entries,
+                "exits": exits,
+                "outcome": outcome,
+                "hold_reason": "agent_decision" if record.action == "HOLD" else None,
             }
-            
-            # Add hold reason if action is HOLD
-            if record.action == "HOLD":
-                cycles_record["hold_reason"] = "agent_decision"
             
             # Add reasoning trace if available
             if state.reasoning_traces.get("momentum_trader"):
                 reasoning = state.reasoning_traces["momentum_trader"]
                 cycles_record["reasoning_trace"] = {
-                    "candidate_count": len(state.candidates or []),
-                    "quantitative_edge": reasoning.evidence.get("quantitative_edge") if reasoning.evidence else None,
-                    "llm_choice": reasoning.decision if reasoning.decision else None,
+                    "candidate_count": len(getattr(state, "opportunities", [])),
+                    "final_decision": getattr(reasoning, "final_decision", None),
+                    "confidence": getattr(reasoning, "confidence", 0.0),
+                    "total_turns": getattr(reasoning, "total_turns", 0),
                 }
             
             append_cycles_journal(cycles_record)

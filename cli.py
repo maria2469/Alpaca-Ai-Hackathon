@@ -724,9 +724,33 @@ def run(
     interval: int = typer.Option(
         settings.LOOP_INTERVAL_SECONDS, help="Seconds between cycles with --loop."
     ),
+    engine: str = typer.Option(
+        "agentic",
+        help="Trading engine: 'agentic' (Multi-Agent System) or 'legacy' (procedural single-thread).",
+    ),
+    llm: bool = typer.Option(
+        False, help="Enable Gemini LLM multi-turn reasoning and advisories."
+    ),
 ) -> None:
-    """Run one trading cycle (or loop). Paper only; dry run unless --execute."""
+    """Run trading cycle (or loop). Defaults to autonomous Multi-Agent System."""
     setup_logging()
+
+    # Route to Multi-Agent System by default unless legacy or manual mode requested
+    if engine.lower() == "agentic" and not manual_mode:
+        from multi_agent_cli import run_agentic_loop, create_agents
+        from graph import TradingGraph
+        logger.info("Initializing PACA Multi-Agent System (TradingGraph)...")
+        agents = create_agents()
+        graph = TradingGraph(agents)
+        run_agentic_loop(
+            graph,
+            execute=execute,
+            loop=loop,
+            interval=interval,
+            llm=llm,
+        )
+        return
+
     config, trading, stock_data, option_data = _bootstrap()
     if execute:
         logger.warning("ARMED: paper order submission is enabled")
@@ -780,6 +804,33 @@ def run(
             break
         time.sleep(interval)
         _check_fills(trading, pending)  # catch slow fills from earlier cycles
+
+
+@app.command()
+def live(
+    interval: int = typer.Option(
+        settings.LOOP_INTERVAL_SECONDS, "--interval", help="Seconds between cycles in live market loop."
+    ),
+    llm: bool = typer.Option(
+        False, "--llm", help="Enable Google Gemini multi-turn reasoning and advisories."
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip confirmation prompt."
+    ),
+) -> None:
+    """Launch continuous LIVE paper trading using the autonomous Multi-Agent System."""
+    setup_logging()
+    if not yes:
+        typer.confirm(
+            "Start autonomous LIVE paper trading loop on Alpaca paper endpoint?",
+            abort=True,
+        )
+    from multi_agent_cli import run_agentic_loop, create_agents
+    from graph import TradingGraph
+    logger.info("=== PACA Multi-Agent System: LIVE PAPER TRADING ARMED ===")
+    agents = create_agents()
+    graph = TradingGraph(agents)
+    run_agentic_loop(graph, execute=True, loop=True, interval=interval, llm=llm)
 
 
 @app.command()

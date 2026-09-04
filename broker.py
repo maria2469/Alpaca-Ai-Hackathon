@@ -12,6 +12,7 @@ details and credentials can never leak into logs or tracebacks.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import concurrent.futures
 from datetime import date, datetime, timedelta
 from typing import Any, Callable
@@ -86,9 +87,31 @@ def find_live_trading_signals(env: dict[str, str]) -> list[str]:
     return findings
 
 
+def _read_env_file(path: Path = Path(".env")) -> dict[str, str]:
+    """Parse key=value pairs from .env if present on disk without external dependencies."""
+    if not path.exists():
+        return {}
+    loaded: dict[str, str] = {}
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            key = key.strip()
+            val = val.strip().strip("'\"")
+            loaded[key] = val
+            os.environ.setdefault(key, val)
+    except Exception:
+        pass
+    return loaded
+
+
 def load_config(env: dict[str, str] | None = None) -> Config:
     """Credentials + paper guards from env; strategy values come from settings.yaml."""
-    env = dict(os.environ) if env is None else env
+    if env is None:
+        file_env = _read_env_file()
+        env = {**file_env, **dict(os.environ)}
     live = find_live_trading_signals(env)
     if live:
         raise ConfigError(
