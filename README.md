@@ -68,70 +68,27 @@ typo'd key, a wrong type, or an out-of-range value stops the program naming the
 exact key (e.g. `settings.yaml: exits.stop_fraction: must be in (0, 1), got 5`).
 `.env` holds only credentials and the paper flag — secrets and strategy never mix.
 
-## Methodology (approved 2026-08-31, revised 2026-09-02)
+## Methodology
 
-All numbers below are the shipped `settings.yaml` defaults — change them there.
-After the first live trading day the signal and spread-selection rules were
-revised (MACD magnitude threshold, RSI exhaustion gate, debit-fraction band) —
-the full review, evidence and rationale are in
+Debit vertical spreads on a whitelist of liquid underlyings, entered on
+ATR-scaled momentum events (gap, breakout, MACD cross) with an LLM picking
+only the symbol and direction, sized as fractions of live equity, and exited
+mechanically. The full rule set, one section per stage with the
+`settings.yaml` key behind every number, lives in
+[**docs/METHODOLOGY.md**](docs/METHODOLOGY.md):
+[Whitelist](docs/METHODOLOGY.md#whitelist) ·
+[Signals](docs/METHODOLOGY.md#signals) ·
+[Decision](docs/METHODOLOGY.md#decision) ·
+[Spread selection](docs/METHODOLOGY.md#spread-selection) ·
+[Risk and sizing](docs/METHODOLOGY.md#risk-and-sizing) ·
+[Exits](docs/METHODOLOGY.md#exits) ·
+[Orders](docs/METHODOLOGY.md#orders).
+
+Deeper studies behind individual rules: spread ranking and its worked example
+in [docs/SPREAD_SELECTION.md](docs/SPREAD_SELECTION.md); the take-profit
+rule and its TSLA example in [docs/TAKE_PROFIT.md](docs/TAKE_PROFIT.md); the
+day-by-day evidence for every revision in
 [docs/trading_review.md](docs/trading_review.md).
-
-- **Whitelist** (`symbols` in settings.yaml): SPY, QQQ, IWM, AAPL, NVDA, TSLA, MSFT, AMZN,
-  IBIT, MSTR, SLV, WMT, GLD, USO, XLE by default (index/tech core plus bitcoin, metals,
-  energy and staples for diversification).
-- **Signals**: OHLCV bars at the configured `bar_timeframe` (default 5m, one
-  fetch per symbol) drive RSI(14), ATR(14) and MACD(12/26/9). A symbol is a
-  candidate only when at least one **event** fired on the latest completed bar:
-  gap (|open − prior close| > 2×ATR), breakout (|close − open| > 2×ATR), or the
-  MACD histogram crossing zero with |histogram| ≥ 0.05×ATR (sub-threshold flips
-  are chop, not momentum) — ATR taken as of the prior bar. Entry gates: market
-  open, bars fresher than 2× bar duration, enough history for the indicators,
-  quote present, event fired, and the **RSI exhaustion gate** (entries only):
-  CALL events are dropped at RSI ≥ 70, PUT events at RSI ≤ 30. Trading near the
-  open and the close is allowed. A held or pending underlying is not a candidate.
-  **Advisory trend context**: distances of the last close from a 25-bar and a
-  50-bar EMA are journaled and shown to the decider (not a gate) — pending
-  review evidence before hardening into an `against_trend` gate.
-- **Decision**: the LLM sees the event-firing candidates (events + RSI/ATR/MACD
-  readings) and returns `{action, symbol, direction, thesis}`. Malformed output
-  means no entry. Deterministic code picks everything else.
-- **Spread selection**: the nearest **3 expiries** (weeklies included) with
-  **≥5 DTE** that have at least 3 strikes within 5% of spot with OI ≥ 100
-  (skips the empty daily expiries ETFs like GLD list), ranked as one pool;
-  strikes within ±10% of spot, OTM only plus the one ATM strike bracketing
-  spot; pair widths between **1% and 5% of spot**; per-leg filter: open
-  interest ≥ 100, fresh two-sided quote (within 10 s of the server clock),
-  leg spread ≤ 350 bps, implied volatility present; sanity
-  `0.05 ≤ net debit < width`; the debit must sit in **25%–45% of the width**
-  (long leg near ATM — no deep-OTM lottery tickets, no overpriced spreads;
-  see [docs/trading_review.md](docs/trading_review.md)); rank by **reward-to-risk**
-  `(width − debit) / debit`, highest first (ties → tighter combined leg
-  quotes). Full methodology and the alternatives considered:
-  [docs/SPREAD_SELECTION.md](docs/SPREAD_SELECTION.md).
-- **Risk (from live equity, every cycle)**: per entry ≤ 0.5% of equity, open
-  premium per underlying ≤ 1.5%, new premium per cycle ≤ 1%, total open premium
-  at risk ≤ 10%. Unknown equity or unknown open risk refuses entries. An
-  underlying already held may take a further entry only in the **same
-  direction** as the held spread (`allow_stacking: true`, the default; `false`
-  = one spread per underlying); the per-underlying cap sizes the add, and the
-  add never reuses a held leg.
-- **Exits (mechanical only, before entries, every cycle)**: close the spread
-  when net mark ≤ −50% of entry debit, ≥ 3× entry debit **or** ≥ 65% of the
-  strike width (whichever is lower; mark/width ≈ implied probability of a full
-  payoff, so the width rule means the same remaining reward:risk on every
-  spread), DTE ≤ 2, or — the **reversal
-  exit** (`reversal_exit: true`) — when an entry event fires *against* the
-  spread's direction on its underlying (e.g. `gap_down` while holding a call
-  spread). Precedence: expiry → reversal → stop → take-profit; reversal, like
-  expiry, works even when the entry debit or marks are unknown. The LLM is
-  never consulted on exits. Entry debit comes from Alpaca's per-leg
-  `avg_entry_price`, so it survives restarts. Held underlyings get signal
-  coverage even if removed from the whitelist.
-- **Orders**: one MLEG limit order per action (entry at the fresh net debit,
-  exit at the fresh net credit — negative limit per Alpaca's convention),
-  time-in-force day, deterministic `client_order_id` per cycle and spread
-  (exit ids carry both strikes so two spreads on one underlying/expiry can
-  close in the same cycle).
 
 ## Safety rules this code enforces
 
