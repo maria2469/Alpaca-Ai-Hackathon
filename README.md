@@ -1,6 +1,17 @@
 # PACA — Position-Aware Agentic Capital Allocator
 
-An institutional-grade, autonomous multi-agent options trading system built for the [**Alpaca AI Trading Agents Hackathon**](https://lablab.ai/ai-hackathons/alpaca-ai-trading-agents-hackathon) (Aug 28 – Sep 4, 2026, submissions due Sep 4 15:00 UTC). PACA trades **debit vertical spreads** using real-time parallel market scanning, 2-round dialectical specialist debate (Bull vs. Bear vs. Options), dynamic risk-decision negotiation, closed-loop memory calibration, and active mechanical position management.
+An autonomous multi-agent options trading system built for the [**Alpaca AI Trading Agents Hackathon**](https://lablab.ai/ai-hackathons/alpaca-ai-trading-agents-hackathon) (Aug 28 – Sep 4, 2026, submissions due Sep 4 15:00 UTC). PACA trades **debit vertical spreads** using real-time parallel market scanning, multi-turn LLM reasoning for momentum trading, deterministic options spread selection, dynamic risk management, closed-loop memory calibration, and active mechanical position management.
+
+## 🎯 Key Features
+
+- **2-Agent Core Architecture**: Momentum Trader (LLM-based) + Options Trader (deterministic) with multi-turn reasoning traces
+- **Multi-Turn LLM Reasoning**: Step-by-step reasoning with full traceability for momentum trading decisions
+- **Real-Time Parallel Scanning**: Concurrent market data ingestion across 15 whitelisted symbols with pre-fetched account state
+- **Advanced Risk Management**: 4-tier equity risk caps, portfolio Greeks limits, EV optimization, and daily drawdown protection
+- **Mechanical Exit System**: Automated profit targets, stop-losses, time stops, and thesis invalidation exits
+- **Closed-Loop Memory**: Trade lifecycle tracking, win-rate calibration, and post-mortem reflection for continuous improvement
+- **Live Dashboards**: Real-time Surge.sh deployments for cycle monitoring and candlestick chart visualization
+- **Paper Trading Only**: Strict safety controls with paper-only enforcement and deterministic risk guards
 
 > [!TIP]
 > **Live Dashboards**, updated automatically on trading cycles:
@@ -15,8 +26,9 @@ An institutional-grade, autonomous multi-agent options trading system built for 
 
 ## 🏛️ System Architecture
 
-### Multi-Agent Pipeline & Feedback Loops
+### Multi-Agent Pipeline with Multi-Turn Reasoning
 ![PACA Autonomous Architecture](assets/architecture.png)
+![LangGraph Architecture](assets/langgraph_architecture.png)
 
 ```mermaid
 flowchart TD
@@ -28,28 +40,28 @@ flowchart TD
         S_DATA --> S_IND --> S_GREEK --> S_EVT
     end
 
-    subgraph S2["2. MARKET REGIME AGENT"]
-        R_CLASS["Deterministic Regime Classification"]
-        R_TYPES["trending_up • trending_down • high_vol_chop • low_vol_drift"]
-        R_CLASS --> R_TYPES
+    subgraph S2["2. MOMENTUM TRADER (Multi-Turn LLM Reasoning)"]
+        MT_COLLECT["Step 1: Candidate Collection"]
+        MT_QUANT["Step 2: Quantitative Pre-filter (Edge Score ≥ 0.55)"]
+        MT_CONTEXT["Step 3: Context Integration (Lessons, Mistakes, Scratchpad)"]
+        MT_LLM["Step 4: LLM Decision (Gemini)"]
+        MT_SUMMARY["Step 5: Decision Summary & Trace"]
+        MT_COLLECT --> MT_QUANT --> MT_CONTEXT --> MT_LLM --> MT_SUMMARY
     end
 
-    subgraph S3["3. TRADE INTELLIGENCE (2-ROUND DEBATE & CRITIC)"]
-        BULL["Bull Agent<br/><i>Momentum & breakouts</i>"]
-        BEAR["Bear Agent<br/><i>Overbought & macro resistance</i>"]
-        OPT["Options Specialist<br/><i>IV Skew & spread liquidity</i>"]
-        CRITIC["Critic Arbiter & Gemini LLM<br/><i>Consensus probability & action</i>"]
-        BULL <-->|Round 2 Rebuttals & Concessions| BEAR
-        BULL & BEAR & OPT --> CRITIC
+    subgraph S3["3. OPTIONS TRADER (Deterministic)"]
+        OT_CONFIRM["Confirm Momentum Decision"]
+        OT_SCREEN["Deterministic Spread Selection (options_screener.py)"]
+        OT_OPT["EV Optimization: Strike/Expiry/Size"]
+        OT_CONFIRM --> OT_SCREEN --> OT_OPT
     end
 
-    subgraph S4["4. PORTFOLIO RISK GATE & EV OPTIMIZER"]
+    subgraph S4["4. PORTFOLIO RISK GATE"]
         RG_SIZING["4-Tier Fractional Sizing (pos_and_risk.py)"]
         RG_GREEKS["Portfolio Greeks (|Δ| ≤ 50, Net Decay)"]
         RG_CLUSTER["Tech Cluster Exposure Cap (≤ 4% Equity)"]
         RG_CIRCUIT["Daily Drawdown Circuit Breaker (≥ 2.5%)"]
-        RG_EV["EV Optimization: (P_win × Profit) - (P_loss × Loss)"]
-        RG_SIZING & RG_GREEKS & RG_CLUSTER & RG_CIRCUIT --> RG_EV
+        RG_SIZING & RG_GREEKS & RG_CLUSTER & RG_CIRCUIT
     end
 
     subgraph S5["5. EXECUTION AGENT"]
@@ -78,14 +90,14 @@ flowchart TD
     end
 
     S1 -->|Features & Opportunities| S2
-    S2 -->|Regime Context| S3
-    S3 -->|Consensus Candidate| S4
+    S2 -->|Symbol + Direction| S3
+    S3 -->|Spread Plan| S4
     S4 -->|Approved OrderPlan| S5
-    S4 -.->|Dynamic Negotiation Loop (max 1)| S3
     S5 -->|Filled Leg Positions| S6
     S6 -->|Realized Outcomes| S7
-    S7 -.->|Feedback Loop 1: Lesson & Mistake Injection| S3
-    S7 -.->|Feedback Loop 3: Calibration Weights| S2
+    S7 -.->|Feedback Loop: Lesson & Mistake Injection| S2
+    S7 -.->|Feedback Loop: Calibration Weights| S1
+```
 ```
 
 ---
@@ -94,16 +106,25 @@ flowchart TD
 
 | Diagram box | Module | Job |
 |---|---|---|
-| Entry signal (market data) | [`market_data.py`](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/market_data.py) | OHLCV DataFrame for one symbol at a time, any bar timeframe |
-| Entry signal (analysis) | [`signals.py`](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/signals.py) | RSI/ATR/MACD + event detection (gap, breakout, MACD chop filter) + entry gates (pure) |
-| Entry signal (decision) | [`decision_layer.py`](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/decision_layer.py) | Gemini LLM (OpenAI fallback) — or `--manual-mode` — picks entries conditioned on trend anchors & past lessons |
-| Option screener | [`options_screener.py`](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/options_screener.py) | Expiry selection, spread enumeration, liquidity filter, debit-fraction band, EV ranking (pure) |
-| Risk & Position manager | [`pos_and_risk.py`](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/pos_and_risk.py) | Leg pairing, mechanical exits, 4-tier equity-relative sizing, position stacking (pure) |
-| Execution + Account state | [`broker.py`](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/broker.py) | Alpaca paper API gateway; ThreadPoolExecutor snapshots; `submit_paper_order` chokepoint |
-| PnL & Performance | [`pnl.py`](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/pnl.py) & [`export_candles.py`](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/export_candles.py) | Realized/open PnL calculation and 5m candle chart data generator |
-| Orchestration & CLI | [`cli.py`](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/cli.py) & [`multi_agent_cli.py`](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/multi_agent_cli.py) | Typer CLI commands, cycle loop, 7-agent pipeline execution & performance profiler |
-| Configuration | [`settings.yaml`](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/settings.yaml) & [`settings.py`](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/settings.py) | Validated single configuration source with strict bounds checks |
-| Data models | [`data_models.py`](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/data_models.py) | Frozen dataclasses, immutable data structures, JSON serialization |
+| Multi-Agent Orchestration | [`graph/trading_graph.py`](graph/trading_graph.py) | LangGraph StateGraph with 7-agent pipeline, conditional edges, performance monitoring |
+| Agent State Management | [`graph/state.py`](graph/state.py) | Shared AgentState dataclass, memory subsystems, debate history, performance tracking |
+| Market Scanner Agent | [`agents/market_scanner.py`](agents/market_scanner.py) | Parallel OHLCV ingestion, pre-fetched account state, indicator calculation across all symbols |
+| Regime Agent | [`agents/regime_agent.py`](agents/regime_agent.py) | Deterministic market regime classification (trending_up, high_vol_chop, etc.) |
+| Decision Agent | [`agents/decision_agent.py`](agents/decision_agent.py) | 2-Round Dialectical Debate (Bull vs. Bear vs. Options) with Critic arbitration |
+| Risk Gate Agent | [`agents/risk_gate.py`](agents/risk_gate.py) | 4-tier equity risk caps, portfolio Greeks limits, EV optimization, daily drawdown protection |
+| Execution Agent | [`agents/execution_agent.py`](agents/execution_agent.py) | Limit price pegging, slippage control, Alpaca MLEG order formatting |
+| Position Manager Agent | [`agents/position_manager.py`](agents/position_manager.py) | Real-time mark-to-market PnL, DTE time stops, thesis invalidation exits |
+| Trade Memory Agent | [`agents/trade_memory.py`](agents/trade_memory.py) | Lifecycle trace recording, win-rate calibration, mistake identification, post-mortem reflection |
+| Entry signal (market data) | [`market_data.py`](market_data.py) | OHLCV DataFrame for one symbol at a time, any bar timeframe |
+| Entry signal (analysis) | [`signals.py`](signals.py) | RSI/ATR/MACD + event detection (gap, breakout, MACD chop filter) + entry gates (pure) |
+| Entry signal (decision) | [`decision_layer.py`](decision_layer.py) | Gemini LLM (OpenAI fallback) — or `--manual-mode` — picks entries conditioned on trend anchors & past lessons |
+| Option screener | [`options_screener.py`](options_screener.py) | Expiry selection, spread enumeration, liquidity filter, debit-fraction band, EV ranking (pure) |
+| Risk & Position manager | [`pos_and_risk.py`](pos_and_risk.py) | Leg pairing, mechanical exits, 4-tier equity-relative sizing, position stacking (pure) |
+| Execution + Account state | [`broker.py`](broker.py) | Alpaca paper API gateway; ThreadPoolExecutor snapshots; `submit_paper_order` chokepoint |
+| PnL & Performance | [`pnl.py`](pnl.py) & [`export_candles.py`](export_candles.py) | Realized/open PnL calculation and 5m candle chart data generator |
+| Orchestration & CLI | [`cli.py`](cli.py) & [`multi_agent_cli.py`](multi_agent_cli.py) | Typer CLI commands, cycle loop, 7-agent pipeline execution & performance profiler |
+| Configuration | [`settings.yaml`](settings.yaml) & [`settings.py`](settings.py) | Validated single configuration source with strict bounds checks |
+| Data models | [`data_models.py`](data_models.py) | Frozen dataclasses, immutable data structures, JSON serialization |
 
 ---
 
@@ -113,20 +134,20 @@ PACA implements 3 persistent memory layers and 3 active feedback loops to contin
 
 ### Memory Subsystems
 1. **Inter-Cycle Working Scratchpad Memory (`working_scratchpad`)**:
-   - Location: [graph/state.py](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/graph/state.py) & [agents/decision_agent.py](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/agents/decision_agent.py)
+   - Location: [`graph/state.py`](graph/state.py) & [`agents/decision_agent.py`](agents/decision_agent.py)
    - Tracks setup narratives per symbol across 5-minute bars (e.g. `{"MSFT": "[14:35] Active Thesis (BUY_CALL): Consensus confirmed after Bear debate..."}`). Prevents amnesic bar evaluation.
 2. **Trade Lifecycle Memory (`TradeMemoryRecord`)**:
-   - Location: [agents/trade_memory.py](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/agents/trade_memory.py) & `logs/trade_memory.jsonl`
+   - Location: [`agents/trade_memory.py`](agents/trade_memory.py) & `logs/trade_memory.jsonl`
    - Logs complete trade traces (`prediction → decision → execution → outcome`) with autonomous post-mortem reflections.
-3. **Dialectical Debate History (`debate_history`)**:
-   - Location: [graph/state.py](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/graph/state.py)
-   - Records multi-turn specialist cross-examination exchanges, counter-arguments, and concession points.
+3. **Multi-Turn Reasoning Traces (`reasoning_traces`)**:
+   - Location: [`graph/state.py`](graph/state.py) & [`agents/decision_agent.py`](agents/decision_agent.py)
+   - Records step-by-step reasoning process (Candidate Collection → Quantitative Filter → Context Integration → LLM Decision → Final Summary) with full traceability.
 
 ### Active Feedback Loops
-1. **Post-Mortem Lesson Injection (Step 7 $\to$ Step 3)**:
-   - Feeds historical trade mistakes and calibration lessons from `TradeMemoryAgent` directly into the `decision_layer.py` prompt context.
-2. **Risk-Decision Negotiation Loop (Step 4 $\to$ Step 3)**:
-   - When `RiskGateAgent` challenges a contract or spread parameter, a dynamic LangGraph conditional edge (`route_after_risk_gate`) loops back to `DecisionAgent` for counter-proposal deliberation (excluding the rejected candidate).
+1. **Post-Mortem Lesson Injection (Step 7 $\to$ Step 2)**:
+   - Feeds historical trade mistakes and calibration lessons from `TradeMemoryAgent` directly into the Momentum Trader's LLM context.
+2. **Multi-Turn Reasoning Feedback**:
+   - Each reasoning step logs to `reasoning_traces` for full auditability and debugging of decision logic.
 3. **Signal & Regime Calibration Loop**:
    - Tracks win rates grouped by technical event (`breakout_up`, `gap_up`) and market regime (`high_vol_chop`), modulating confidence thresholds downstream.
 
@@ -152,7 +173,7 @@ PACA implements 3 persistent memory layers and 3 active feedback loops to contin
 
 ## 📈 Trading Methodology
 
-All numbers below are default settings configured in [settings.yaml](file:///d:/Projects/Aplaca/Alpaca-Ai-Hackathon/settings.yaml):
+All numbers below are default settings configured in [settings.yaml](settings.yaml):
 
 - **Underlyings**: Whitelist of liquid US stocks and ETFs (`SPY, QQQ, IWM, AAPL, NVDA, TSLA, MSFT, AMZN, IBIT, MSTR, SLV, WMT, GLD, USO, XLE`).
 - **Timeframe**: 5-minute bars (`bar_timeframe: 5m`, `loop_interval_seconds: 300`).
@@ -213,7 +234,7 @@ ALPACA_PAPER=true
 GEMINI_API_KEY=your_gemini_api_key
 ```
 
-### 2. Verify System (267 Tests, 0 Network Calls)
+### 2. Verify System
 Run the full offline test suite:
 ```bash
 uv run pytest
@@ -276,9 +297,60 @@ uv run --env-file .env python multi_agent_cli.py analyze-bottlenecks
 
 # Benchmark multi-agent vs procedural mode
 uv run --env-file .env python multi_agent_cli.py compare-modes
+
+# Run deterministic agent cycle using main system logic
+uv run --env-file .env python multi_agent_cli.py run-deterministic
+
+# Run integration test with main system
+uv run --env-file .env python multi_agent_cli.py run-integration
 ```
 
 ---
+
+## 📁 Project Structure
+
+```
+paca/
+├── agents/                    # Multi-agent system implementation
+│   ├── __init__.py
+│   ├── base_agent.py         # Base agent class with performance monitoring
+│   ├── market_scanner.py     # Fast opportunity scanner agent
+│   ├── regime_agent.py       # Market regime classification agent
+│   ├── decision_agent.py     # 2-round dialectical debate decision agent
+│   ├── risk_gate.py          # Portfolio risk gate & EV optimizer
+│   ├── execution_agent.py    # Order execution agent
+│   ├── position_manager.py   # Real-time position manager agent
+│   └── trade_memory.py       # Trade memory & analytics agent
+├── graph/                     # LangGraph orchestration
+│   ├── __init__.py
+│   ├── state.py              # Agent state management
+│   └── trading_graph.py      # Multi-agent pipeline orchestration
+├── docs/                      # Documentation
+│   ├── DASHBOARDS.md         # Dashboard deployment details
+│   ├── SPREAD_SELECTION.md   # Spread selection methodology
+│   ├── TODO.md               # Outstanding issues and follow-ups
+│   └── trading_review.md     # Post-close trading reviews
+├── surge_artifacts/           # Surge.sh dashboard deployments
+│   ├── paca-cycles/          # Cycle monitor dashboard
+│   └── paca-candles/         # Candlestick chart dashboard
+├── tests/                     # Test suite
+├── .claude/                   # Claude Code skills
+│   └── skills/                # Specialized skills for this project
+├── broker.py                  # Alpaca API gateway
+├── cli.py                     # Main CLI interface
+├── multi_agent_cli.py         # Multi-agent CLI with performance profiling
+├── market_data.py             # Market data fetching
+├── signals.py                 # Technical analysis & event detection
+├── decision_layer.py          # LLM decision layer
+├── options_screener.py        # Options spread screening
+├── pos_and_risk.py            # Position sizing & risk management
+├── pnl.py                     # PnL calculation
+├── export_candles.py         # Candle data export for dashboards
+├── data_models.py             # Data models
+├── settings.py                # Settings validation
+├── settings.yaml              # Trading configuration
+└── sounds.py                  # Audio alerts
+```
 
 ## 🤖 Claude Code Skills
 
@@ -303,6 +375,8 @@ The repository includes specialized Claude Code skills in `.claude/skills/`:
    /trading-review
    ```
 
+4. **`/surge-artifacts`**: Design and publish standalone HTML pages — reports, explainers, demos, dashboards, mini-sites — to surge.sh at miroai-artifacts-<slug>.surge.sh.
+
 ---
 
 ## 🛡️ Safety Hard Guards
@@ -315,3 +389,27 @@ The repository includes specialized Claude Code skills in `.claude/skills/`:
 - **Options Level 3 Guard**: Verifies that the Alpaca paper account has approved Options Trading Level $\ge 3$ before arming any order.
 - **Unpaired Leg Isolation**: Unrecognized or non-spread positions are flagged and never modified.
 - **Dry-Run Default**: The system defaults to dry-run simulation unless `--execute` is explicitly supplied.
+- **Performance Timeouts**: Each agent has timeout protection (1.0-4.0s depending on complexity) with fallback logic to prevent cascade failures.
+- **Bottleneck Detection**: System automatically detects and logs performance bottlenecks with fallback mechanisms.
+
+## 🔄 Workflow
+
+### Standard Trading Workflow
+
+1. **Market Scan**: Market Scanner Agent fetches parallel OHLCV data and account state for all 15 whitelisted symbols
+2. **Regime Analysis**: Regime Agent classifies current market conditions (trending, chop, drift)
+3. **Decision Process**: Decision Agent conducts 2-round dialectical debate between Bull, Bear, and Options specialists
+4. **Risk Evaluation**: Risk Gate Agent evaluates portfolio risk, calculates EV, and applies position sizing rules
+5. **Order Execution**: Execution Agent submits MLEG limit orders with price pegging and slippage control
+6. **Position Management**: Position Manager Agent monitors real-time PnL and executes mechanical exits
+7. **Trade Memory**: Trade Memory Agent records complete lifecycle and performs post-mortem analysis
+
+### Development Workflow
+
+1. **Configuration**: Edit `settings.yaml` to adjust trading parameters, risk limits, and technical indicators
+2. **Testing**: Run `uv run pytest` to verify system integrity with 267 offline tests
+3. **Preflight**: Run `uv run --env-file .env cli.py preflight` to validate settings and API connectivity
+4. **Dry-Run**: Test with `uv run --env-file .env cli.py run --manual-mode` before live execution
+5. **Live Trading**: Execute with `uv run --env-file .env cli.py run --execute --loop` for autonomous trading
+6. **Review**: Use `/trading-review` skill for post-close analysis and performance review
+7. **Dashboard**: Automatic Surge.sh deployment via `/paca-agent` skill for real-time monitoring

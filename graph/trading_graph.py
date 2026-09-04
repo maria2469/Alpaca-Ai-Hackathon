@@ -28,53 +28,28 @@ class TradingGraph:
         self.max_cycle_time = 10.0  # Maximum allowed time for full cycle (seconds)
     
     def _build_graph(self) -> StateGraph:
-        """Build the complete 7-step LangGraph workflow with risk-decision negotiation loop."""
+        """Build the simplified 2-agent core workflow with supporting agents."""
         workflow = StateGraph(AgentState)
-        
-        # Add 7 agent nodes
+
+        # Add agent nodes
         workflow.add_node("market_scanner", self._market_scanner_node)
-        workflow.add_node("regime_agent", self._regime_agent_node)
-        workflow.add_node("decision_agent", self._decision_agent_node)
+        workflow.add_node("momentum_trader", self._momentum_trader_node)
+        workflow.add_node("options_trader", self._options_trader_node)
         workflow.add_node("risk_gate", self._risk_gate_node)
         workflow.add_node("execution_agent", self._execution_agent_node)
         workflow.add_node("position_manager", self._position_manager_node)
         workflow.add_node("trade_memory", self._trade_memory_node)
-        
+
         # Define workflow edges
         workflow.set_entry_point("market_scanner")
-        workflow.add_edge("market_scanner", "regime_agent")
-        workflow.add_edge("regime_agent", "decision_agent")
-        workflow.add_edge("decision_agent", "risk_gate")
-        
-        # Conditional Edge: Risk Gate -> Decision Agent (Negotiation loop) OR Execution Agent
-        def route_after_risk_gate(state: AgentState) -> str:
-            """Dynamic negotiation: if Risk Gate challenges the contract, loop back for counter-proposal."""
-            if (
-                state.risk_decision
-                and not state.risk_decision.approved
-                and state.critic_analysis
-                and state.critic_analysis.consensus_action in ("BUY_CALL", "BUY_PUT")
-                and state.negotiation_count == 0
-                and any(term in state.risk_decision.reason.lower() for term in ("no acceptable spread", "low confidence", "rejected"))
-            ):
-                logger.info("LangGraph: Risk Gate challenged decision -> Routing back to Decision Agent for counter-proposal")
-                state.negotiation_count += 1
-                return "decision_agent"
-            return "execution_agent"
-
-        workflow.add_conditional_edges(
-            "risk_gate",
-            route_after_risk_gate,
-            {
-                "decision_agent": "decision_agent",
-                "execution_agent": "execution_agent",
-            },
-        )
-
+        workflow.add_edge("market_scanner", "momentum_trader")
+        workflow.add_edge("momentum_trader", "options_trader")
+        workflow.add_edge("options_trader", "risk_gate")
+        workflow.add_edge("risk_gate", "execution_agent")
         workflow.add_edge("execution_agent", "position_manager")
         workflow.add_edge("position_manager", "trade_memory")
         workflow.add_edge("trade_memory", END)
-        
+
         return workflow.compile(checkpointer=self.checkpointer)
 
     def save_graph_image(self, output_path: str = "assets/langgraph_architecture.png") -> None:
@@ -108,59 +83,52 @@ class TradingGraph:
             state.add_bottleneck(f"Market Scanner took {execution_time:.3f}s")
         
         return state
-    
-    async def _regime_agent_node(self, state: AgentState) -> AgentState:
-        """Regime classification agent node with fast fallback."""
+
+    async def _momentum_trader_node(self, state: AgentState) -> AgentState:
+        """Momentum trader agent node - LLM-based entry decision."""
         start_time = datetime.utcnow()
-        logger.info("Executing Regime Agent")
-        
-        try:
-            agent = self.agents["regime_agent"]
-            # Regime agent has shorter timeout - use deterministic fallback if slow
-            result = await self._execute_agent_with_timeout(agent, state, timeout=1.5)
-            state = result
-        except Exception as e:
-            logger.warning(f"Regime Agent failed, using fallback: {e}")
-            # Fallback to simple regime classification
-            state.regime_belief = self._fallback_regime_classification(state)
-            state.add_bottleneck(f"Regime Agent timeout, used fallback")
-        
-        execution_time = (datetime.utcnow() - start_time).total_seconds()
-        state.execution_times["regime_agent"] = execution_time
-        
-        return state
-    
-    async def _decision_agent_node(self, state: AgentState) -> AgentState:
-        """Decision agent with parallel perspective analysis."""
-        start_time = datetime.utcnow()
-        logger.info("Executing Decision Agent")
-        
-        # If this is a negotiation re-entry following a risk challenge:
-        if state.risk_decision and not state.risk_decision.approved:
-            state.negotiation_count += 1
-            if state.critic_analysis and state.critic_analysis.consensus_symbol:
-                rejected_sym = state.critic_analysis.consensus_symbol
-                logger.info(f"Decision Agent: Counter-proposal deliberation excluding challenged symbol {rejected_sym}")
-                state.opportunities = [o for o in state.opportunities if o.symbol != rejected_sym]
+        logger.info("Executing Momentum Trader Agent")
 
         try:
-            agent = self.agents["decision_agent"]
-            # Decision agent gets more time but has parallel execution
+            agent = self.agents.get("momentum_trader") or self.agents.get("decision_agent")
+            if not agent:
+                logger.warning("Momentum Trader not found, skipping")
+                return state
             result = await self._execute_agent_with_timeout(agent, state, timeout=4.0)
             state = result
         except Exception as e:
-            logger.error(f"Decision Agent failed: {e}")
-            state.add_bottleneck(f"Decision Agent failed: {str(e)}")
-            # Fallback to simple decision logic
+            logger.error(f"Momentum Trader failed: {e}")
+            state.add_bottleneck(f"Momentum Trader failed: {str(e)}")
             state.critic_analysis = self._fallback_decision(state)
-        
+
         execution_time = (datetime.utcnow() - start_time).total_seconds()
-        state.execution_times["decision_agent"] = execution_time
-        
+        state.execution_times["momentum_trader"] = execution_time
+
         if execution_time > 3.0:
-            logger.warning(f"Decision Agent slow: {execution_time:.3f}s")
-            state.add_bottleneck(f"Decision Agent took {execution_time:.3f}s")
-        
+            logger.warning(f"Momentum Trader slow: {execution_time:.3f}s")
+            state.add_bottleneck(f"Momentum Trader took {execution_time:.3f}s")
+
+        return state
+
+    async def _options_trader_node(self, state: AgentState) -> AgentState:
+        """Options trader agent node - deterministic spread selection."""
+        start_time = datetime.utcnow()
+        logger.info("Executing Options Trader Agent")
+
+        try:
+            agent = self.agents.get("options_trader")
+            if not agent:
+                logger.warning("Options Trader not found, skipping")
+                return state
+            result = await self._execute_agent_with_timeout(agent, state, timeout=3.0)
+            state = result
+        except Exception as e:
+            logger.error(f"Options Trader failed: {e}")
+            state.add_bottleneck(f"Options Trader failed: {str(e)}")
+
+        execution_time = (datetime.utcnow() - start_time).total_seconds()
+        state.execution_times["options_trader"] = execution_time
+
         return state
     
     async def _risk_gate_node(self, state: AgentState) -> AgentState:

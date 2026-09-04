@@ -11,9 +11,9 @@ from loguru import logger
 import typer
 from graph import TradingGraph, AgentState
 from agents import (
-    MarketScannerAgent, 
-    RegimeAgent, 
-    DecisionAgent,
+    MarketScannerAgent,
+    MomentumTraderAgent,
+    OptionsTraderAgent,
     RiskGateAgent,
     ExecutionAgent,
     PositionManagerAgent,
@@ -38,8 +38,8 @@ def create_agents() -> dict:
     """Create all agents with optimized timeouts."""
     return {
         "market_scanner": MarketScannerAgent(timeout=3.0),
-        "regime_agent": RegimeAgent(timeout=1.5),
-        "decision_agent": DecisionAgent(timeout=4.0),
+        "momentum_trader": MomentumTraderAgent(timeout=4.0),
+        "options_trader": OptionsTraderAgent(timeout=3.0),
         "risk_gate": RiskGateAgent(timeout=3.0),
         "execution_agent": ExecutionAgent(timeout=1.0),
         "position_manager": PositionManagerAgent(timeout=3.0),

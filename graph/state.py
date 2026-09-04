@@ -10,6 +10,58 @@ from data_models import SymbolFeatures
 
 
 @dataclass
+class ReasoningStep:
+    """Single step in multi-turn reasoning process."""
+    step_number: int
+    step_name: str
+    reasoning: str
+    conclusion: str
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ReasoningTrace:
+    """Complete multi-turn reasoning trace for an agent decision."""
+    agent_name: str
+    cycle_id: str
+    steps: List[ReasoningStep] = field(default_factory=list)
+    final_decision: str = ""
+    confidence: float = 0.0
+    total_turns: int = 0
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+
+    def add_step(self, step_name: str, reasoning: str, conclusion: str, metadata: Dict[str, Any] = None) -> None:
+        """Add a reasoning step to the trace."""
+        step_number = len(self.steps) + 1
+        step = ReasoningStep(
+            step_number=step_number,
+            step_name=step_name,
+            reasoning=reasoning,
+            conclusion=conclusion,
+            metadata=metadata or {}
+        )
+        self.steps.append(step)
+        self.total_turns = len(self.steps)
+
+    def to_summary(self) -> str:
+        """Generate a human-readable summary of the reasoning trace."""
+        lines = [
+            f"Reasoning Trace - {self.agent_name} (Cycle: {self.cycle_id})",
+            f"Total Turns: {self.total_turns} | Final Decision: {self.final_decision} | Confidence: {self.confidence:.2f}",
+            ""
+        ]
+        for step in self.steps:
+            lines.append(f"Step {step.step_number}: {step.step_name}")
+            lines.append(f"  Reasoning: {step.reasoning}")
+            lines.append(f"  Conclusion: {step.conclusion}")
+            if step.metadata:
+                lines.append(f"  Metadata: {step.metadata}")
+            lines.append("")
+        return "\n".join(lines)
+
+
+@dataclass
 class MarketSnapshot:
     """Enhanced market data with IV and Greeks."""
     symbol: str
@@ -215,6 +267,9 @@ class AgentState:
     agent_perspectives: Dict[str, AgentPerspective] = field(default_factory=dict)
     debate_history: List[DebateRound] = field(default_factory=list)
     working_scratchpad: Dict[str, str] = field(default_factory=dict)
+    reasoning_traces: Dict[str, ReasoningTrace] = field(default_factory=dict)  # Multi-turn reasoning traces
+    recent_lessons: List[str] = field(default_factory=list)  # Lessons from TradeMemory
+    agent_mistakes: List[str] = field(default_factory=list)  # Mistakes from TradeMemory
     
     # Critic Evaluation
     critic_analysis: Optional[CriticAnalysis] = None

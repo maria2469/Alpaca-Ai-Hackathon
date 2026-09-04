@@ -124,10 +124,10 @@ class TestRegimeAgent:
 # Step 3: Decision Agent (Bull / Bear / Critic)
 # ═══════════════════════════════════════════════════════════════════
 
-class TestDecisionAgent:
+class TestMomentumTraderAgent:
     def test_consensus_with_bullish_signals(self, base_state):
-        from agents.decision_agent import DecisionAgent
-        agent = DecisionAgent(timeout=2.0)
+        from agents.decision_agent import MomentumTraderAgent
+        agent = MomentumTraderAgent(timeout=2.0)
         base_state.regime_belief = RegimeBelief(
             regime="trending_up_low_vol", confidence=0.85,
             volatility_level="low", trend_strength=0.75,
@@ -144,12 +144,45 @@ class TestDecisionAgent:
         assert result.critic_analysis.consensus_action in ("BUY_CALL", "BUY_PUT", "HOLD")
 
     def test_hold_when_no_opportunities(self, base_state):
-        from agents.decision_agent import DecisionAgent
-        agent = DecisionAgent(timeout=2.0)
+        from agents.decision_agent import MomentumTraderAgent
+        agent = MomentumTraderAgent(timeout=2.0)
         base_state.opportunities = []
         base_state.regime_belief = RegimeBelief(
             regime="high_vol_chop", confidence=0.60,
             volatility_level="high", trend_strength=0.30,
+        )
+        result = agent.execute(base_state)
+        assert result.critic_analysis is not None
+        assert result.critic_analysis.consensus_action == "HOLD"
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Step 3: Options Trader
+# ═══════════════════════════════════════════════════════════════════
+
+class TestOptionsTraderAgent:
+    def test_confirms_momentum_decision(self, base_state):
+        """Options Trader should confirm momentum decision."""
+        from agents.options_trader import OptionsTraderAgent
+        agent = OptionsTraderAgent(timeout=2.0)
+        base_state.critic_analysis = CriticAnalysis(
+            consensus_action="BUY_CALL", consensus_symbol="SPY",
+            consensus_probability=0.70, conflicting_agents=[],
+            confidence_score=0.70, recommendation="Momentum: SPY CALL"
+        )
+        result = agent.execute(base_state)
+        assert result.critic_analysis is not None
+        assert result.critic_analysis.consensus_action == "BUY_CALL"
+        assert result.critic_analysis.consensus_symbol == "SPY"
+
+    def test_hold_when_no_momentum_decision(self, base_state):
+        """Options Trader should HOLD when no momentum decision."""
+        from agents.options_trader import OptionsTraderAgent
+        agent = OptionsTraderAgent(timeout=2.0)
+        base_state.critic_analysis = CriticAnalysis(
+            consensus_action="HOLD", consensus_symbol=None,
+            consensus_probability=1.00, conflicting_agents=[],
+            confidence_score=0.60, recommendation="No momentum decision"
         )
         result = agent.execute(base_state)
         assert result.critic_analysis is not None
@@ -387,9 +420,9 @@ class TestAgentStateWiring:
         assert len(f.events) == 1
 
     def test_dialectical_debate_execution(self, base_state):
-        """Dialectical debate should record a DebateRound with theses and rebuttals."""
-        from agents.decision_agent import DecisionAgent
-        agent = DecisionAgent(timeout=2.0)
+        """Momentum Trader should produce critic_analysis and update working scratchpad."""
+        from agents.decision_agent import MomentumTraderAgent
+        agent = MomentumTraderAgent(timeout=2.0)
         base_state.regime_belief = RegimeBelief(
             regime="trending_up_low_vol", confidence=0.85,
             volatility_level="low", trend_strength=0.75,
@@ -402,13 +435,13 @@ class TestAgentStateWiring:
             ),
         ]
         result = agent.execute(base_state)
-        assert len(result.debate_history) >= 1
-        debate = result.debate_history[-1]
-        assert debate.round_number == 2
-        assert "bull_agent" in debate.theses
-        assert "bear_agent" in debate.theses
+        # Momentum Trader should produce a critic_analysis
+        assert result.critic_analysis is not None
+        # Should update working scratchpad
         assert len(result.working_scratchpad) > 0
         assert "SPY" in result.working_scratchpad
+        # Should have a consensus action (HOLD or BUY)
+        assert result.critic_analysis.consensus_action in ("HOLD", "BUY_CALL", "BUY_PUT")
 
     def test_recent_lessons_injection_in_decision_layer(self):
         """decide_entry should accept recent_lessons, mistakes, and scratchpad without error."""
