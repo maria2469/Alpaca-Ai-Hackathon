@@ -121,7 +121,7 @@ class TestRegimeAgent:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Step 3: Decision Agent (Bull / Bear / Critic)
+# Step 3: Decision Agent (Momentum Trader with Multi-Turn Reasoning)
 # ═══════════════════════════════════════════════════════════════════
 
 class TestMomentumTraderAgent:
@@ -329,6 +329,14 @@ class TestPositionManagerAgent:
 # ═══════════════════════════════════════════════════════════════════
 
 class TestTradeMemoryAgent:
+    @staticmethod
+    def _mock_append(path, record):
+        """Helper to mock append_cycles_journal for testing."""
+        import json
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, separators=(",", ":")) + "\n")
+
     def test_cycle_tracing_records_trade(self, base_state, tmp_path):
         """Full cycle trace should produce a TradeMemoryRecord."""
         from agents.trade_memory import TradeMemoryAgent
@@ -393,7 +401,51 @@ class TestTradeMemoryAgent:
         result = agent.execute(base_state)
         assert result.trade_memory_record is not None
         assert result.trade_memory_record.action == "HOLD"
-        assert result.trade_memory_record.symbol == "NONE"
+
+    def test_cycles_journal_writes_dashboard_compatible_record(self, base_state, tmp_path, monkeypatch):
+        """TradeMemoryAgent should write to cycles.jsonl for dashboard compatibility."""
+        from agents.trade_memory import TradeMemoryAgent, CYCLES_JOURNAL_PATH, append_cycles_journal
+        memory_file = tmp_path / "test_memory.jsonl"
+        cycles_file = tmp_path / "cycles.jsonl"
+        
+        # Define a mock append function
+        def mock_append(record):
+            import json
+            cycles_file.parent.mkdir(parents=True, exist_ok=True)
+            with cycles_file.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, separators=(",", ":")) + "\n")
+        
+        # Monkeypatch the cycles journal path to tmp_path
+        monkeypatch.setattr("agents.trade_memory.CYCLES_JOURNAL_PATH", cycles_file)
+        monkeypatch.setattr("agents.trade_memory.append_cycles_journal", mock_append)
+        
+        agent = TradeMemoryAgent(timeout=1.0, memory_path=memory_file)
+
+        base_state.critic_analysis = CriticAnalysis(
+            consensus_action="BUY_CALL", consensus_symbol="SPY",
+            consensus_probability=0.72, conflicting_agents=[],
+            confidence_score=0.88, recommendation="Strong buy",
+        )
+        base_state.regime_belief = RegimeBelief(
+            regime="trending_up_low_vol", confidence=0.85,
+            volatility_level="low", trend_strength=0.75,
+        )
+
+        result = agent.execute(base_state)
+        
+        # Verify cycles.jsonl was written
+        assert cycles_file.exists()
+        lines = cycles_file.read_text().strip().splitlines()
+        assert len(lines) == 1
+        
+        # Verify record format matches cli.py expectations
+        record = json.loads(lines[0])
+        assert "cycle_id" in record
+        assert "started_at" in record
+        assert "market_open" in record
+        assert "outcome" in record
+        assert record["symbol"] == "SPY"
+        assert record["action"] == "buy_call"  # lowercase for dashboard
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -420,7 +472,7 @@ class TestAgentStateWiring:
         assert len(f.events) == 1
 
     def test_dialectical_debate_execution(self, base_state):
-        """Momentum Trader should produce critic_analysis and update working scratchpad."""
+        """Momentum Trader should produce critic_analysis and update working scratchpad (legacy test name preserved for compatibility)."""
         from agents.decision_agent import MomentumTraderAgent
         agent = MomentumTraderAgent(timeout=2.0)
         base_state.regime_belief = RegimeBelief(

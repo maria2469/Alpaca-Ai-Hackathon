@@ -4,8 +4,8 @@ An autonomous multi-agent options trading system built for the [**Alpaca AI Trad
 
 ## 🎯 Key Features
 
-- **2-Agent Core Architecture**: Momentum Trader (LLM-based) + Options Trader (deterministic) with multi-turn reasoning traces
-- **Multi-Turn LLM Reasoning**: Step-by-step reasoning with full traceability for momentum trading decisions
+- **7-Agent Autonomous Pipeline**: LangGraph-based multi-agent architecture with clear separation of duties
+- **Multi-Turn LLM Reasoning**: Momentum Trader with step-by-step reasoning (candidate collection, quantitative filter, context integration, LLM decision, trace)
 - **Real-Time Parallel Scanning**: Concurrent market data ingestion across 15 whitelisted symbols with pre-fetched account state
 - **Advanced Risk Management**: 4-tier equity risk caps, portfolio Greeks limits, EV optimization, and daily drawdown protection
 - **Mechanical Exit System**: Automated profit targets, stop-losses, time stops, and thesis invalidation exits
@@ -40,7 +40,7 @@ flowchart TD
         S_DATA --> S_IND --> S_GREEK --> S_EVT
     end
 
-    subgraph S2["2. MOMENTUM TRADER (Multi-Turn LLM Reasoning)"]
+    subgraph S2["2. DECISION AGENT - MOMENTUM TRADER (Multi-Turn LLM Reasoning)"]
         MT_COLLECT["Step 1: Candidate Collection"]
         MT_QUANT["Step 2: Quantitative Pre-filter (Edge Score ≥ 0.55)"]
         MT_CONTEXT["Step 3: Context Integration (Lessons, Mistakes, Scratchpad)"]
@@ -107,10 +107,10 @@ flowchart TD
 | Diagram box | Module | Job |
 |---|---|---|
 | Multi-Agent Orchestration | [`graph/trading_graph.py`](graph/trading_graph.py) | LangGraph StateGraph with 7-agent pipeline, conditional edges, performance monitoring |
-| Agent State Management | [`graph/state.py`](graph/state.py) | Shared AgentState dataclass, memory subsystems, debate history, performance tracking |
+| Agent State Management | [`graph/state.py`](graph/state.py) | Shared AgentState dataclass, memory subsystems, reasoning traces, performance tracking |
 | Market Scanner Agent | [`agents/market_scanner.py`](agents/market_scanner.py) | Parallel OHLCV ingestion, pre-fetched account state, indicator calculation across all symbols |
 | Regime Agent | [`agents/regime_agent.py`](agents/regime_agent.py) | Deterministic market regime classification (trending_up, high_vol_chop, etc.) |
-| Decision Agent | [`agents/decision_agent.py`](agents/decision_agent.py) | 2-Round Dialectical Debate (Bull vs. Bear vs. Options) with Critic arbitration |
+| Decision Agent | [`agents/decision_agent.py`](agents/decision_agent.py) | Momentum Trader with multi-turn LLM reasoning (candidate collection, quantitative filter, context integration, LLM decision) |
 | Risk Gate Agent | [`agents/risk_gate.py`](agents/risk_gate.py) | 4-tier equity risk caps, portfolio Greeks limits, EV optimization, daily drawdown protection |
 | Execution Agent | [`agents/execution_agent.py`](agents/execution_agent.py) | Limit price pegging, slippage control, Alpaca MLEG order formatting |
 | Position Manager Agent | [`agents/position_manager.py`](agents/position_manager.py) | Real-time mark-to-market PnL, DTE time stops, thesis invalidation exits |
@@ -135,7 +135,7 @@ PACA implements 3 persistent memory layers and 3 active feedback loops to contin
 ### Memory Subsystems
 1. **Inter-Cycle Working Scratchpad Memory (`working_scratchpad`)**:
    - Location: [`graph/state.py`](graph/state.py) & [`agents/decision_agent.py`](agents/decision_agent.py)
-   - Tracks setup narratives per symbol across 5-minute bars (e.g. `{"MSFT": "[14:35] Active Thesis (BUY_CALL): Consensus confirmed after Bear debate..."}`). Prevents amnesic bar evaluation.
+   - Tracks setup narratives per symbol across 5-minute bars (e.g. `{"MSFT": "[14:35] Active Thesis (BUY_CALL): Momentum Trader confirmed after quantitative edge analysis..."}`). Prevents amnesic bar evaluation.
 2. **Trade Lifecycle Memory (`TradeMemoryRecord`)**:
    - Location: [`agents/trade_memory.py`](agents/trade_memory.py) & `logs/trade_memory.jsonl`
    - Logs complete trade traces (`prediction → decision → execution → outcome`) with autonomous post-mortem reflections.
@@ -159,7 +159,7 @@ PACA implements 3 persistent memory layers and 3 active feedback loops to contin
 | :--- | :--- | :--- |
 | **Control Flow** | Sequential procedural loop in `cli.py` | Directed 7-Agent Autonomous Pipeline with shared `AgentState` |
 | **Market Ingestion** | Sequential symbol-by-symbol bar reading (~3.5s) | Parallel thread-pooled bar collection + pre-fetched account state (<2.2s) |
-| **Trade Decision** | Single prompt LLM call or manual prompt | **2-Round Dialectical Debate**: Bull vs. Bear vs. Options Specialists with Rebuttal & Critic Arbitration |
+| **Trade Decision** | Single prompt LLM call or manual prompt | **Momentum Trader with Multi-Turn Reasoning**: Candidate collection, quantitative filter, context integration, LLM decision with full traceability |
 | **Market Regime** | Static indicator thresholds | Dynamic **Regime Agent** categorizing market state (`trending_up`, `high_vol_chop`, etc.) to modulate confidence |
 | **Portfolio Risk Sizing** | Basic equity percentage check | **4-Tier Fractional Sizing** + **Portfolio Greeks Limit ($|\Delta| \le 50$)** + **Tech Cluster Cap ($\le 4\%$)** + **Daily Drawdown Breaker ($\ge 2.5\%$)** |
 | **Contract Optimization** | Static spread heuristic | **Expected Value (EV)** equation: $\text{EV} = (P_{\text{win}} \times \text{Max Profit}) - (P_{\text{loss}} \times \text{Max Loss})$ |
@@ -208,7 +208,7 @@ All numbers below are default settings configured in [settings.yaml](settings.ya
 
 1. **Fast Opportunity Scanner Agent**: Parallel OHLCV ingestion + account pre-fetch + indicator calculation across all 15 symbols concurrently.
 2. **Market Regime Agent**: Fast deterministic classification (`trending_up`, `trending_down`, `high_vol_chop`, `low_vol_drift`).
-3. **Trade Intelligence Agent**: 2-Round Dialectical Debate (Bull vs. Bear vs. Options Specialist) with rebuttals, concessions, and Critic arbitration via Gemini.
+3. **Decision Agent (Momentum Trader)**: Multi-turn LLM reasoning with candidate collection, quantitative pre-filter (edge score ≥ 0.55), context integration (lessons, mistakes, scratchpad), and LLM decision via Gemini.
 4. **Portfolio Risk Gate & EV Optimizer**: Expected Value calculation, 4-tier equity risk caps, tech cluster limit, and daily drawdown protection.
 5. **Execution Agent**: Limit price pegging between natural and mid debit, slippage control, and Alpaca MLEG order formatting.
 6. **Real-Time Position Manager Agent**: Mark-to-market valuations and deterministic exit execution.
@@ -316,7 +316,7 @@ paca/
 │   ├── base_agent.py         # Base agent class with performance monitoring
 │   ├── market_scanner.py     # Fast opportunity scanner agent
 │   ├── regime_agent.py       # Market regime classification agent
-│   ├── decision_agent.py     # 2-round dialectical debate decision agent
+│   ├── decision_agent.py     # Momentum Trader with multi-turn LLM reasoning
 │   ├── risk_gate.py          # Portfolio risk gate & EV optimizer
 │   ├── execution_agent.py    # Order execution agent
 │   ├── position_manager.py   # Real-time position manager agent
@@ -398,7 +398,7 @@ The repository includes specialized Claude Code skills in `.claude/skills/`:
 
 1. **Market Scan**: Market Scanner Agent fetches parallel OHLCV data and account state for all 15 whitelisted symbols
 2. **Regime Analysis**: Regime Agent classifies current market conditions (trending, chop, drift)
-3. **Decision Process**: Decision Agent conducts 2-round dialectical debate between Bull, Bear, and Options specialists
+3. **Decision Process**: Decision Agent (Momentum Trader) conducts multi-turn reasoning with candidate collection, quantitative filtering, context integration, and LLM decision
 4. **Risk Evaluation**: Risk Gate Agent evaluates portfolio risk, calculates EV, and applies position sizing rules
 5. **Order Execution**: Execution Agent submits MLEG limit orders with price pegging and slippage control
 6. **Position Management**: Position Manager Agent monitors real-time PnL and executes mechanical exits

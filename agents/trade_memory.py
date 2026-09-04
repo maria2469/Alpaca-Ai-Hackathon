@@ -29,6 +29,19 @@ import settings
 
 
 TRADE_MEMORY_PATH = Path("logs") / "trade_memory.jsonl"
+CYCLES_JOURNAL_PATH = Path("logs") / "cycles.jsonl"
+
+
+def to_json_line(obj: dict) -> str:
+    """Serialize a dict to a single JSON line (no pretty-printing)."""
+    return json.dumps(obj, separators=(",", ":"))
+
+
+def append_cycles_journal(record: dict) -> None:
+    """Append a cycle record to cycles.jsonl for dashboard compatibility."""
+    CYCLES_JOURNAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with CYCLES_JOURNAL_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(to_json_line(record) + "\n")
 
 
 class TradeMemoryAgent(BaseAgent):
@@ -59,7 +72,7 @@ class TradeMemoryAgent(BaseAgent):
 
     @monitor_performance("trade_memory", timeout=2.0)
     def execute(self, state: AgentState) -> AgentState:
-        """Trace current cycle, update memory, compute analytics, and run post-mortem reflection."""
+        """Trace current cycle, update memory, compute analytics, run post-mortem reflection, and write to cycles.jsonl."""
         logger.info("Trade Memory & Analytics: Recording cycle trace and analyzing performance")
         
         try:
@@ -67,13 +80,16 @@ class TradeMemoryAgent(BaseAgent):
             record = self._build_cycle_memory_record(state)
             state.trade_memory_record = record
 
-            # 2. Persist to JSONL file & buffer
+            # 2. Persist to trade_memory.jsonl & buffer
             self._persist_record(record)
 
-            # 3. Compute Quantitative Analytics (Calibration, Signal attribution, Mistakes)
+            # 3. Write to cycles.jsonl for dashboard compatibility
+            self._write_cycles_journal(state, record)
+
+            # 4. Compute Quantitative Analytics (Calibration, Signal attribution, Mistakes)
             analytics = self._compute_performance_analytics()
             
-            # 4. Optional Gemini Post-Mortem Reflection (if trade exited or requested)
+            # 5. Optional Gemini Post-Mortem Reflection (if trade exited or requested)
             if getattr(state, "use_llm", False) and record.action != "HOLD":
                 lesson = self._run_llm_post_mortem(record, state)
                 if lesson:
@@ -277,6 +293,48 @@ class TradeMemoryAgent(BaseAgent):
             agent_mistake_summary=mistakes[:5] if mistakes else ["No critical agent mistakes logged."],
             recent_lessons=[],
         )
+
+    def _write_cycles_journal(self, state: AgentState, record: TradeMemoryRecord) -> None:
+        """Write cycle record to cycles.jsonl for dashboard compatibility (matches cli.py format)."""
+        try:
+            # Build cycles record matching cli.py format
+            cycles_record = {
+                "cycle_id": record.cycle_id,
+                "started_at": record.timestamp.isoformat() if record.timestamp else None,
+                "symbol": record.symbol,
+                "action": record.action.lower(),
+                "dry_run": False,  # Agentic cycles are not dry runs
+                "market_open": True,  # Assume market open during agentic cycles
+                "equity": None,  # Not available in agent state
+                "options_level": None,  # Not available in agent state
+                "open_spreads": [],  # Simplified - could be enhanced from state
+                "open_risk": record.portfolio_risk,
+                "warnings": [],
+                "entries": [],
+                "exits": [],
+                "outcome": record.execution_status.lower() if record.execution_status else "hold",
+                "hold_reason": None,
+            }
+            
+            # Add hold reason if action is HOLD
+            if record.action == "HOLD":
+                cycles_record["hold_reason"] = "agent_decision"
+            
+            # Add reasoning trace if available
+            if state.reasoning_traces.get("momentum_trader"):
+                reasoning = state.reasoning_traces["momentum_trader"]
+                cycles_record["reasoning_trace"] = {
+                    "candidate_count": len(state.candidates or []),
+                    "quantitative_edge": reasoning.evidence.get("quantitative_edge") if reasoning.evidence else None,
+                    "llm_choice": reasoning.decision if reasoning.decision else None,
+                }
+            
+            append_cycles_journal(cycles_record)
+            logger.info(f"Trade Memory: Wrote cycle {record.cycle_id} to cycles.jsonl")
+            
+        except Exception as e:
+            logger.error(f"Trade Memory: Failed to write to cycles.jsonl: {e}")
+            state.add_bottleneck(f"cycles.jsonl write failed: {str(e)}")
 
     def _run_llm_post_mortem(
         self, record: TradeMemoryRecord, state: AgentState
