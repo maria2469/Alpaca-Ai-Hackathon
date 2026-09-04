@@ -108,6 +108,18 @@ def opposing_event_fired(spread: OpenSpread, events: tuple[Event, ...]) -> bool:
     return any(event.direction == against for event in events)
 
 
+def held_direction(spreads: list[OpenSpread]) -> str | None:
+    """Direction of the spreads held on ONE underlying: "CALL" for call spreads,
+    "PUT" for put spreads, None when nothing is held or both types are (no add
+    is allowed against a mixed book)."""
+    types = {spread.option_type for spread in spreads}
+    if types == {"C"}:
+        return "CALL"
+    if types == {"P"}:
+        return "PUT"
+    return None
+
+
 def exit_decision(
     spread: OpenSpread,
     long_quote: LegQuote | None,

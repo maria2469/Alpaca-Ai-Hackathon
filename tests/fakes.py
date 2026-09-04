@@ -5,7 +5,15 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from alpaca.trading.enums import AssetClass, PositionSide
+from alpaca.trading.enums import (
+    AssetClass,
+    OrderClass,
+    OrderSide,
+    OrderStatus,
+    PositionIntent,
+    PositionSide,
+    QueryOrderStatus,
+)
 
 NOW = datetime(2026, 8, 31, 15, 0, tzinfo=timezone.utc)
 TODAY = NOW.date()
@@ -21,7 +29,14 @@ def fake_account(equity: float | None = 100_000.0, level: int = 3) -> SimpleName
     return SimpleNamespace(equity=equity, options_trading_level=level)
 
 
-def fake_position(symbol: str, qty: int, avg_entry_price: float, side: str = "long") -> SimpleNamespace:
+def fake_position(
+    symbol: str,
+    qty: int,
+    avg_entry_price: float,
+    side: str = "long",
+    unrealized_pl: float | None = None,
+    current_price: float | None = None,
+) -> SimpleNamespace:
     # Real SDK enums, matching what the live client returns: str() of them is
     # "AssetClass.US_OPTION" / "PositionSide.SHORT", which once hid all positions.
     return SimpleNamespace(
@@ -30,6 +45,46 @@ def fake_position(symbol: str, qty: int, avg_entry_price: float, side: str = "lo
         side=PositionSide.SHORT if "short" in side else PositionSide.LONG,
         avg_entry_price=str(avg_entry_price),
         asset_class=AssetClass.US_OPTION,
+        unrealized_pl=None if unrealized_pl is None else str(unrealized_pl),
+        current_price=None if current_price is None else str(current_price),
+    )
+
+
+def fake_mleg_fill(
+    client_order_id: str,
+    legs: list[tuple[str, str, str, float]],
+    qty: int,
+    filled_at: datetime = NOW,
+    status: OrderStatus = OrderStatus.FILLED,
+    order_class: OrderClass = OrderClass.MLEG,
+) -> SimpleNamespace:
+    """A closed MLEG order as the SDK returns it with nested=True.
+
+    legs: (symbol, "buy"|"sell", "buy_to_open"|..., filled_avg_price).
+    The parent's filled_avg_price is the net (+buy −sell), like the real API.
+    """
+    leg_models = [
+        SimpleNamespace(
+            symbol=symbol,
+            side=OrderSide(side),
+            position_intent=PositionIntent(intent),
+            filled_avg_price=str(price),
+            filled_qty=str(qty),
+            status=status,
+        )
+        for symbol, side, intent, price in legs
+    ]
+    net = sum(price if side == "buy" else -price for _, side, _, price in legs)
+    return SimpleNamespace(
+        id=f"id-{client_order_id}",
+        client_order_id=client_order_id,
+        order_class=order_class,
+        status=status,
+        qty=str(qty),
+        filled_qty=str(qty),
+        filled_avg_price=str(round(net, 4)),
+        filled_at=filled_at,
+        legs=leg_models,
     )
 
 
@@ -66,11 +121,13 @@ class FakeTradingClient:
         submit_error: Exception | None = None,
         order_statuses: dict | None = None,
         cancel_error: Exception | None = None,
+        closed_orders=(),
     ):
         self.account = account or fake_account()
         self.clock = clock or fake_clock()
         self.positions = list(positions)
         self.orders = list(orders)
+        self.closed_orders = list(closed_orders)
         self.contracts = list(contracts)
         self.submit_error = submit_error
         self.submitted: list = []
@@ -88,10 +145,14 @@ class FakeTradingClient:
         return self.positions
 
     def get_orders(self, request):
+        if getattr(request, "status", None) == QueryOrderStatus.CLOSED:
+            return self.closed_orders
         return self.orders
 
     def get_option_contracts(self, request):
-        return SimpleNamespace(option_contracts=self.contracts, next_page_token=None)
+        root = getattr(request, "root_symbol", None)  # the real API scopes by underlying
+        contracts = [c for c in self.contracts if not root or str(c.symbol).startswith(root)]
+        return SimpleNamespace(option_contracts=contracts, next_page_token=None)
 
     def submit_order(self, request):
         if self.submit_error is not None:
@@ -157,9 +218,12 @@ class FakeStockDataClient:
         return SimpleNamespace(data=self.bars_by_symbol)
 
     def get_stock_latest_quote(self, request):
+        # (bid, ask) tuples are fresh as of NOW; a 3-tuple (bid, ask, stamp) sets the quote time.
         return {
-            symbol: SimpleNamespace(bid_price=bid, ask_price=ask)
-            for symbol, (bid, ask) in self.quotes_by_symbol.items()
+            symbol: SimpleNamespace(
+                bid_price=q[0], ask_price=q[1], timestamp=q[2] if len(q) > 2 else NOW
+            )
+            for symbol, q in self.quotes_by_symbol.items()
         }
 
 

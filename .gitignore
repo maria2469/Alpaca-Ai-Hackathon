@@ -14,4 +14,18 @@ __pycache__/
 *.log
 logs/
 .DS_Store
-surge_artifacts/
+
+# Surge pages are local build output, except the paca-cycles dashboard source.
+# (surge_artifacts/* not surge_artifacts/ — git cannot re-include files under an
+# excluded directory.) Data copies in paca-cycles/ (json, jsonl) stay ignored.
+surge_artifacts/*
+!surge_artifacts/paca-cycles/
+surge_artifacts/paca-cycles/*
+!surge_artifacts/paca-cycles/index.html
+!surge_artifacts/paca-cycles/deploy.sh
+!surge_artifacts/paca-cycles/CNAME
+!surge_artifacts/paca-candles/
+surge_artifacts/paca-candles/*
+!surge_artifacts/paca-candles/index.html
+!surge_artifacts/paca-candles/deploy.sh
+!surge_artifacts/paca-candles/CNAME

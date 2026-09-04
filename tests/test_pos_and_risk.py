@@ -11,12 +11,15 @@ TODAY = date(2026, 8, 31)
 
 
 @pytest.fixture(autouse=True)
-def pinned_risk_fractions(monkeypatch):
-    """Sizing tests assume these caps regardless of trader edits to settings.yaml."""
+def pinned_settings(monkeypatch):
+    """Sizing and exit tests assume these values regardless of trader edits to settings.yaml."""
     monkeypatch.setattr(settings, "PER_ENTRY_FRACTION", 0.005)
     monkeypatch.setattr(settings, "PER_UNDERLYING_FRACTION", 0.02)
     monkeypatch.setattr(settings, "PER_CYCLE_FRACTION", 0.01)
     monkeypatch.setattr(settings, "TOTAL_FRACTION", 0.10)
+    monkeypatch.setattr(settings, "STOP_FRACTION", 0.5)
+    monkeypatch.setattr(settings, "TAKE_PROFIT_MULT", 2.0)
+    monkeypatch.setattr(settings, "EXIT_DTE", 2)
 
 
 def leg(symbol="SPY260911C00650000", underlying="SPY", qty=1, price=3.0, strike=650.0, option_type="C"):
@@ -158,7 +161,7 @@ def test_exit_at_exact_stop_threshold():
 
 
 def test_exit_at_exact_take_profit_threshold():
-    # entry debit 2.00, TP at mark >= 4.00
+    # entry debit 2.00, TP at mark >= 4.00 (pinned 2.0x; settings.yaml may differ)
     decision = pos_and_risk.exit_decision(spread(), quote(4.9, 5.1), quote(0.9, 1.1), TODAY)
     assert decision is not None and decision.reason == "take_profit" and decision.net_mark == 4.0
 
@@ -196,6 +199,22 @@ def test_opposing_event_fired_mapping():
     )
     assert pos_and_risk.opposing_event_fired(put_spread, call_event) is True
     assert pos_and_risk.opposing_event_fired(put_spread, put_event) is False
+
+
+def test_held_direction():
+    def spread(option_type, strike):
+        return OpenSpread(
+            underlying="SPY", expiration=date(2026, 9, 11), option_type=option_type,
+            long_symbol=f"SPY260911{option_type}{int(strike * 1000):08d}",
+            short_symbol=f"SPY260911{option_type}{int((strike + 5) * 1000):08d}",
+            qty=1, net_entry_debit=2.0,
+        )
+
+    assert pos_and_risk.held_direction([]) is None
+    assert pos_and_risk.held_direction([spread("C", 650)]) == "CALL"
+    assert pos_and_risk.held_direction([spread("C", 650), spread("C", 660)]) == "CALL"
+    assert pos_and_risk.held_direction([spread("P", 640)]) == "PUT"
+    assert pos_and_risk.held_direction([spread("C", 650), spread("P", 640)]) is None  # mixed: no add
 
 
 def test_reversal_exit_fires_between_stop_and_take_profit():

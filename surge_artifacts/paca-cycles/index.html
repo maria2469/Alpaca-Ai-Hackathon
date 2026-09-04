@@ -1,0 +1,1102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PACA · Cycle Monitor</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦙</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script>
+  // Theme: a saved choice wins; otherwise follow the OS. Runs before paint to avoid a flash.
+  (function () {
+    let saved = null;
+    try { saved = localStorage.getItem("paca-theme"); } catch (e) {}
+    const system = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    document.documentElement.dataset.theme = saved === "dark" || saved === "light" ? saved : system;
+  })();
+</script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+img { max-width: 100%; }
+
+:root {
+  color-scheme: light;
+  --page:        #f9f9f7;
+  --surface:     #fcfcfb;
+  --ink:         #0b0b0b;
+  --ink-2:       #52514e;
+  --muted:       #898781;
+  --grid:        #e1e0d9;
+  --baseline:    #c3c2b7;
+  --border:      rgba(11,11,11,0.10);
+  --accent:      #2a78d6;   /* series blue */
+  --accent-soft: #cde2fb;   /* sequential 100 */
+  --div-pos:     #2a78d6;   /* diverging: blue pole */
+  --div-neg:     #e34948;   /* diverging: red pole */
+  --div-mid:     #f0efec;
+  --good:        #0ca30c;
+  --good-text:   #006300;
+  --warning:     #fab219;
+  --serious:     #ec835a;
+  --critical:    #d03b3b;
+  --chip:        #f0efec;
+}
+/* Dark palette. data-theme is set by the head script (saved choice, else OS preference). */
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:        #0d0d0d;
+    --surface:     #1a1a19;
+    --ink:         #ffffff;
+    --ink-2:       #c3c2b7;
+    --muted:       #898781;
+    --grid:        #2c2c2a;
+    --baseline:    #383835;
+    --border:      rgba(255,255,255,0.10);
+    --accent:      #3987e5;
+    --accent-soft: #10315c;
+    --div-pos:     #3987e5;
+    --div-neg:     #e66767;
+    --div-mid:     #383835;
+    --good-text:   #0ca30c;
+    --chip:        #2c2c2a;
+}
+
+body {
+  background: var(--page);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.wrap { max-width: 1200px; margin: 0 auto; padding: 24px 20px 64px; }
+
+/* ---------- masthead ---------- */
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px 16px; margin-bottom: 6px; }
+header h1 {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 20px; font-weight: 600; letter-spacing: -0.02em;
+}
+header h1 .tail { color: var(--muted); font-weight: 400; }
+header h1 .home { color: inherit; text-decoration: none; }
+header h1 .home:hover, header h1 .home:focus-visible { text-decoration: underline; text-underline-offset: 4px; outline: none; }
+.sub .ext { color: var(--accent); text-decoration: none; }
+.sub .ext:hover, .sub .ext:focus-visible { text-decoration: underline; }
+.badges { display: flex; gap: 8px; margin-left: auto; }
+.badge {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border);
+  display: inline-flex; align-items: center; gap: 6px; background: var(--surface);
+}
+.badge .dot { width: 7px; height: 7px; border-radius: 50%; }
+.theme-toggle {
+  font: inherit; cursor: pointer; color: var(--ink-2);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface);
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.theme-toggle:hover { color: var(--ink); border-color: var(--ink-2); }
+.theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.theme-toggle .when-dark { display: none; }
+:root[data-theme="dark"] .theme-toggle .when-light { display: none; }
+:root[data-theme="dark"] .theme-toggle .when-dark { display: inline; }
+.sub { color: var(--ink-2); margin-bottom: 20px; }
+.sub .mono { font-size: 13px; }
+
+/* ---------- tabs ---------- */
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--grid); margin-bottom: 20px; }
+.tab {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 8px 14px; background: none; border: none; cursor: pointer;
+  color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tab:hover { color: var(--ink); }
+.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tab.sel { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+
+/* ---------- positions / config ---------- */
+.snapshot-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px;
+  font-size: 12.5px; color: var(--ink-2); margin-bottom: 14px; }
+.snapshot-meta b { color: var(--ink); font-weight: 600; }
+.stale { background: color-mix(in oklab, var(--warning) 18%, transparent);
+  padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; }
+.cfg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.cfg-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+.cfg-card .kv { grid-template-columns: max-content 1fr; row-gap: 5px; }
+.cfg-card .kv dt { color: var(--ink-2); }
+.cfg-card .kv dd { text-align: right; }
+.sym-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ---------- KPI row ---------- */
+.kpis {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px; margin-bottom: 20px;
+}
+.kpi {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px 14px;
+}
+.kpi .label {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+  margin-bottom: 4px;
+}
+.kpi .value { font-size: 26px; font-weight: 650; letter-spacing: -0.01em; }
+.kpi .note { font-size: 12px; color: var(--ink-2); margin-top: 2px; }
+
+/* ---------- outcome strip (one row per trading day, newest first) ---------- */
+.strip-block { margin-bottom: 20px; }
+.strip { display: grid; gap: 6px; }
+.strip-day { display: grid; grid-template-columns: 120px 1fr; align-items: start; gap: 10px; }
+.strip-day-label {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px; color: var(--ink-2); padding-top: 1px; white-space: nowrap;
+}
+.strip-day-label small { color: var(--muted); margin-left: 6px; font-size: 10.5px; }
+.strip-cells { display: flex; gap: 3px; flex-wrap: wrap; }
+.strip .cell { position: relative; }
+.strip .cell.cell-exit::after {
+  content: ""; position: absolute; left: 4px; top: 4px; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ink);
+}
+.strip-legend .legend-exit { background: var(--baseline); position: relative; }
+.strip-legend .legend-exit::after {
+  content: ""; position: absolute; left: 3px; top: 3px; width: 4px; height: 4px; border-radius: 50%; background: var(--ink);
+}
+.strip-label {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+  margin-bottom: 6px;
+}
+.strip { display: flex; gap: 3px; flex-wrap: wrap; }
+.strip .cell {
+  width: 14px; height: 14px; border-radius: 3px; cursor: pointer; border: none; padding: 0;
+}
+.strip .cell:hover, .strip .cell:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.strip .cell.sel { outline: 2px solid var(--ink); outline-offset: 1px; }
+.strip .cell.cell-submitted { box-shadow: 0 0 0 2px var(--good-text); }
+.strip-legend {
+  display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px;
+  font-size: 11.5px; color: var(--ink-2);
+}
+.strip-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.strip-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+/* ---------- layout ---------- */
+.cols { display: grid; grid-template-columns: 360px 1fr; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .cols { grid-template-columns: 1fr; } .strip-day { grid-template-columns: 1fr; gap: 4px; } }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.panel-head {
+  padding: 10px 14px; border-bottom: 1px solid var(--grid);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+}
+
+/* ---------- cycle list (grouped by trading day) ---------- */
+.cycle-list { max-height: 640px; overflow-y: auto; }
+.day-head {
+  position: sticky; top: 0; z-index: 1; background: var(--surface);
+  padding: 7px 14px; border-bottom: 1px solid var(--grid); cursor: pointer; list-style: none;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+}
+.day-head::-webkit-details-marker { display: none; }
+.day-head::before { content: "▸"; margin-right: 8px; color: var(--muted); }
+details.day[open] > .day-head::before { content: "▾"; }
+.day-head .date { color: var(--ink); font-weight: 600; flex: 1; }
+.day-head .counts { font-size: 10.5px; letter-spacing: 0.04em; text-transform: none; }
+.day-head:hover { background: color-mix(in oklab, var(--accent) 6%, var(--surface)); }
+.day-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+details.day:last-child .cycle-row:last-child { border-bottom: none; }
+.cycle-row {
+  width: 100%; text-align: left; background: none; border: none; color: inherit; font: inherit;
+  display: block; padding: 10px 14px; border-bottom: 1px solid var(--grid); cursor: pointer;
+}
+.cycle-row:last-child { border-bottom: none; }
+.cycle-row:hover { background: color-mix(in oklab, var(--accent) 6%, transparent); }
+.cycle-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cycle-row.sel { background: color-mix(in oklab, var(--accent) 11%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
+.cycle-row .top { display: flex; align-items: center; gap: 8px; }
+.cycle-row .time { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.cycle-row .date { color: var(--muted); font-size: 11.5px; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+.cycle-row .summary { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; }
+.cycle-row .summary b { color: var(--ink); font-weight: 600; }
+
+/* ---------- pills & chips ---------- */
+.pill {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+  padding: 1px 8px; border-radius: 999px; display: inline-flex; align-items: center; gap: 5px;
+  white-space: nowrap;
+}
+.pill.outcome-submitted { background: var(--good); color: #fff; }
+.pill.outcome-planned  { background: color-mix(in oklab, var(--good) 16%, transparent); color: var(--good-text); }
+.pill.outcome-entered  { background: color-mix(in oklab, var(--good) 16%, transparent); color: var(--good-text); }
+.pill.exit-take_profit { background: color-mix(in oklab, var(--good) 16%, transparent); color: var(--good-text); }
+.pill.exit-stop        { background: color-mix(in oklab, var(--critical) 16%, transparent); color: var(--critical); }
+.pill.exit-reversal    { background: color-mix(in oklab, var(--warning) 22%, transparent); color: var(--ink); }
+.pill.exit-expiry      { background: var(--chip); color: var(--ink-2); }
+.pill.exit-other       { background: var(--chip); color: var(--ink-2); }
+.pill.outcome-hold     { background: var(--chip); color: var(--ink-2); }
+.pill.outcome-market_closed { background: var(--chip); color: var(--muted); }
+.pill.outcome-error    { background: color-mix(in oklab, var(--critical) 16%, transparent); color: var(--critical); }
+.pill.outcome-other    { background: var(--chip); color: var(--ink-2); }
+.chip {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px; padding: 1px 7px; border-radius: 5px; background: var(--chip); color: var(--ink-2);
+  white-space: nowrap;
+}
+.chip.event-up   { background: color-mix(in oklab, var(--good) 14%, transparent); color: var(--good-text); }
+.chip.event-down { background: color-mix(in oklab, var(--critical) 12%, transparent); color: var(--critical); }
+.dir-call { color: var(--good-text); font-weight: 650; }
+.dir-put  { color: var(--critical); font-weight: 650; }
+.pnl-pos { color: var(--good-text); font-weight: 600; }
+.pnl-neg { color: var(--critical); font-weight: 600; }
+.warn-flag { color: var(--warning); font-weight: 600; }
+
+/* ---------- detail ---------- */
+.detail-body { padding: 14px; display: grid; gap: 16px; }
+.detail-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 12.5px; color: var(--ink-2); }
+.detail-meta b { color: var(--ink); font-weight: 600; }
+.section-title {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.tbl-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th {
+  text-align: left; font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted);
+  font-weight: 500; padding: 6px 10px; border-bottom: 1px solid var(--baseline); white-space: nowrap;
+}
+td { padding: 7px 10px; border-bottom: 1px solid var(--grid); vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+td.num { font-variant-numeric: tabular-nums; text-align: right; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px; }
+td .sym { font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600; }
+tr.blocked td { opacity: 0.55; }
+
+/* RSI bar: 0–100 track with 30/70 hairlines */
+.rsi-wrap { display: flex; align-items: center; gap: 8px; min-width: 140px; }
+.rsi-track { position: relative; flex: 1; height: 8px; background: var(--div-mid); border-radius: 4px; min-width: 90px; }
+.rsi-track .zone { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--baseline); }
+.rsi-track .fill { position: absolute; top: 0; bottom: 0; left: 0; background: var(--accent); border-radius: 4px; }
+.rsi-val { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px; font-variant-numeric: tabular-nums; width: 4ch; text-align: right; }
+
+/* MACD diverging bar */
+.macd-wrap { display: flex; align-items: center; gap: 8px; min-width: 130px; }
+.macd-track { position: relative; flex: 1; height: 8px; min-width: 80px; }
+.macd-track .axis { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--baseline); }
+.macd-track .bar { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
+.macd-val { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px; font-variant-numeric: tabular-nums; width: 6ch; text-align: right; }
+
+/* entry card */
+.entry-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.entry-card { border: 1px solid var(--grid); border-radius: 8px; padding: 12px; display: grid; gap: 8px; align-content: start; }
+.entry-card .headline { font-size: 16px; font-weight: 650; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.entry-card .thesis { font-size: 12.5px; color: var(--ink-2); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; font-size: 12.5px; }
+.kv dt { color: var(--muted); }
+.kv dd { font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.reject-line { font-size: 12.5px; font-weight: 600; color: var(--critical); }
+.ok-line { font-size: 12.5px; font-weight: 600; color: var(--good-text); }
+
+/* horizontal rejection bars */
+.hbar-row { display: grid; grid-template-columns: 140px 1fr 3.5ch; align-items: center; gap: 8px; margin-bottom: 6px; }
+.hbar-label { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; color: var(--ink-2); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hbar-track { height: 12px; position: relative; }
+.hbar-track .bar { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: 0 4px 4px 0; min-width: 2px; }
+.hbar-count { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.warn-list { display: grid; gap: 6px; }
+.warn-item { font-size: 12.5px; padding: 6px 10px; border-radius: 6px; background: color-mix(in oklab, var(--warning) 14%, transparent); }
+.warn-item::before { content: "⚠ "; }
+
+.empty { color: var(--muted); font-size: 12.5px; }
+.legacy-note { font-size: 12px; color: var(--muted); font-style: italic; }
+
+/* tooltip */
+#tip {
+  position: fixed; z-index: 10; pointer-events: none; display: none;
+  background: var(--ink); color: var(--page);
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px;
+  padding: 4px 8px; border-radius: 5px; white-space: nowrap;
+}
+
+footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
+footer code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; }
+
+#err { display: none; margin: 40px auto; max-width: 560px; text-align: center; color: var(--ink-2); }
+@media (prefers-reduced-motion: no-preference) {
+  .cycle-row, .strip .cell { transition: background 120ms ease; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><a class="home" href="./" title="Back to the latest cycle">PACA</a> <span class="tail">/ cycle monitor</span></h1>
+    <div class="badges" id="badges"></div>
+    <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle light or dark theme">
+      <span class="when-light">☾ Dark</span><span class="when-dark">☀ Light</span>
+    </button>
+  </header>
+  <p class="sub">Position-aware Agentic Capital Allocator · paper-trading cycle log · <span class="mono" id="lastCycleTime">—</span>
+    · <a class="ext" href="https://alpaca-hackathon-2026-artifacts-paca-candles.surge.sh">candle charts →</a>
+    · <a class="ext" href="https://github.com/maria2469/Alpaca-Ai-Hackathon" target="_blank" rel="noopener">source on GitHub ↗</a></p>
+
+  <div id="err"></div>
+  <div id="app" hidden>
+    <nav class="tabs" role="tablist">
+      <button class="tab sel" data-tab="cycles">Cycles</button>
+      <button class="tab" data-tab="positions">Positions</button>
+      <button class="tab" data-tab="realized">Realized (PnL)</button>
+      <button class="tab" data-tab="config">Config</button>
+    </nav>
+
+    <div id="tab-cycles">
+    <div class="kpis" id="kpis"></div>
+
+    <div class="strip-block">
+      <div class="strip-label">Outcome history by trading day (newest day first · cells run oldest → newest · click to inspect)</div>
+      <div class="strip" id="strip"></div>
+      <div class="strip-legend">
+        <span><i style="background:var(--good);box-shadow:0 0 0 2px var(--good-text)"></i>submitted — order sent</span>
+        <span><i style="background:color-mix(in oklab, var(--good) 45%, var(--surface))"></i>planned — dry run, would have traded</span>
+        <span><i style="background:var(--baseline)"></i>hold</span>
+        <span><i style="background:var(--grid)"></i>market closed</span>
+        <span><i style="background:var(--critical)"></i>error</span>
+        <span><i class="legend-exit"></i>dot — an exit was decided this cycle</span>
+      </div>
+    </div>
+
+    <div class="cols">
+      <div class="panel">
+        <div class="panel-head"><span>Cycles</span><span id="cycleCount"></span></div>
+        <div class="cycle-list" id="cycleList"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><span>Cycle detail</span><span class="mono" id="detailId"></span></div>
+        <div class="detail-body" id="detail"></div>
+      </div>
+    </div>
+    </div>
+
+    <div id="tab-positions" hidden></div>
+    <div id="tab-realized" hidden></div>
+    <div id="tab-config" hidden></div>
+
+    <footer>
+      Data snapshots (<code>cycles.jsonl</code>, <code>account.json</code>, <code>positions.json</code>,
+      <code>realized.json</code>, <code>config.json</code>)
+      deployed alongside this page — rerun
+      <code>surge_artifacts/paca-cycles/deploy.sh</code> to refresh.
+      All times shown in US Eastern (market time).
+    </footer>
+  </div>
+</div>
+<div id="tip" role="presentation"></div>
+
+<script>
+"use strict";
+
+/* ---------- helpers ---------- */
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const fmtUsd = (v) => v == null ? "—" : v.toLocaleString("en-US", { style:"currency", currency:"USD", maximumFractionDigits: 0 });
+const fmt = (v, d=2) => v == null || Number.isNaN(v) ? "—" : Number(v).toFixed(d);
+// Signed money with cents: "+$1,234.50" / "−$33.00". Used for PnL cells and tiles.
+const fmtSigned = (v) => v == null || Number.isNaN(v) ? "—"
+  : (v < 0 ? "−" : v > 0 ? "+" : "") + Math.abs(v).toLocaleString("en-US", { style:"currency", currency:"USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Fraction (−0.1245) → "−12.5%".
+const fmtPct = (v) => v == null || Number.isNaN(v) ? "—" : (v < 0 ? "−" : v > 0 ? "+" : "") + Math.abs(v * 100).toFixed(1) + "%";
+// Wrap already-formatted text in the sign colour of v (neutral for null/zero).
+const pnlHtml = (v, text) => v == null || v === 0 ? esc(text)
+  : `<span class="${v > 0 ? "pnl-pos" : "pnl-neg"}">${esc(text)}</span>`;
+const dteFrom = (expStr) => { const exp = parseTs(expStr); return exp ? Math.ceil((exp.getTime() - Date.now()) / 86400000) : null; };
+const fmtHold = (min) => min == null ? "—" : min < 60 ? `${Math.round(min)}m` : `${Math.floor(min / 60)}h ${Math.round(min % 60)}m`;
+// OCC option symbol: the last 8 digits are the strike ×1000 (NVDA260909C00227500 → 227.5).
+const occStrike = (sym) => { const m = /(\d{8})$/.exec(sym || ""); return m ? parseInt(m[1], 10) / 1000 : null; };
+const fmtStrike = (v) => String(+v.toFixed(2));
+// Width <td> for a vertical spread, with the strikes in the hover tooltip.
+function widthCell(longSym, shortSym) {
+  const a = occStrike(longSym), b = occStrike(shortSym);
+  if (a == null || b == null) return '<td class="num">—</td>';
+  return `<td class="num"><span data-tip="strikes ${fmtStrike(a)} / ${fmtStrike(b)}">$${fmt(Math.abs(a - b), 2)}</span></td>`;
+}
+
+function parseTs(s) {
+  if (!s) return null;
+  const d = new Date(String(s).replace(" ", "T"));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+const etTime = new Intl.DateTimeFormat("en-US", { timeZone:"America/New_York", hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false });
+const etDate = new Intl.DateTimeFormat("en-US", { timeZone:"America/New_York", month:"short", day:"numeric" });
+const etFull = new Intl.DateTimeFormat("en-US", { timeZone:"America/New_York", month:"short", day:"numeric", hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false });
+// Trading-day grouping is done in US/Eastern: a 20:00 ET cycle must not fall into the next UTC day.
+const etDayKey = new Intl.DateTimeFormat("en-CA", { timeZone:"America/New_York", year:"numeric", month:"2-digit", day:"2-digit" });  // "2026-09-01"
+const etDayLabel = new Intl.DateTimeFormat("en-US", { timeZone:"America/New_York", weekday:"short", month:"short", day:"numeric" });  // "Mon, Sep 1"
+const dayKey = (c) => c.started ? etDayKey.format(c.started) : "unknown";
+// [{key, label, idxs}] newest day first; idxs index the newest-first `cycles` array (the data-idx contract).
+function groupByDay(list) {
+  const groups = new Map();
+  list.forEach((c, i) => {
+    const key = dayKey(c);
+    if (!groups.has(key)) groups.set(key, { key, label: c.started ? etDayLabel.format(c.started) : "unknown date", idxs: [] });
+    groups.get(key).idxs.push(i);
+  });
+  return [...groups.values()];
+}
+
+/* ---------- exits ---------- */
+const EXIT_REASON_LABEL = { expiry: "≤2 DTE expiry", reversal: "reversal", stop: "stop −50%", take_profit: "take-profit +100%" };
+const exitReasonClass = (r) => r in EXIT_REASON_LABEL ? "exit-" + r : "exit-other";
+// "AAPL 2026-09-11 C" -> {underlying, expiration, type}
+function parseSpreadLabel(s) {
+  const m = /^(\S+)\s+(\d{4}-\d{2}-\d{2})\s+([CP])/.exec(String(s || ""));
+  return m ? { underlying: m[1], expiration: m[2], type: m[3] } : { underlying: String(s || "?"), expiration: "", type: "" };
+}
+function exitStatus(x) {  // {kind: ok|failed|planned|skipped, text}
+  const r = x.receipt;
+  if (x.skipped) return { kind: "skipped", text: x.skipped === "pending_order" ? "skipped — an order is already pending on these legs" : x.skipped === "no_quote" ? "skipped — no usable quote" : "skipped — " + x.skipped };
+  if (!r) return { kind: "skipped", text: "no order record" };
+  if (r.submitted) return { kind: "ok", text: "exit order submitted" + (r.status ? " · " + r.status : "") };
+  if (r.dry_run) return { kind: "planned", text: "planned (dry run)" + (r.plan?.limit_price != null ? ` — limit $${fmt(Math.abs(r.plan.limit_price), 2)} credit` : "") };
+  return { kind: "failed", text: "submit failed — " + (r.error || "unknown error") };
+}
+function exitSummary(c) {  // short text for list rows and strip tooltips
+  if (!c.exits.length) return "";
+  const names = c.exits.map(x => parseSpreadLabel(x.spread).underlying);
+  const reasons = [...new Set(c.exits.map(x => x.reason).filter(Boolean))].join("/");
+  const failed = c.exits.filter(x => exitStatus(x).kind === "failed").length;
+  const skipped = c.exits.filter(x => exitStatus(x).kind === "skipped").length;
+  const head = c.exits.length === 1 ? `exit ${names[0]}` : `${c.exits.length} exits: ${names.join(", ")}`;
+  return head + (reasons ? ` (${reasons})` : "") + (failed ? ` · ${failed} failed` : "") + (skipped ? ` · ${skipped} skipped` : "");
+}
+
+/* ---------- schema normalization ----------
+   Slim schema (current): flat fields.
+   Legacy schema (has .evidence): map the few fields we can, flag as legacy. */
+function normalize(raw) {
+  if (raw.evidence) {
+    const ev = raw.evidence, dec = raw.decision || {};
+    return {
+      legacy: true,
+      cycle_id: raw.cycle_id,
+      started: parseTs(raw.started_at),
+      dry_run: raw.mode !== "live",
+      market_open: ev.underlying ? ev.underlying.market_is_open : null,
+      equity: ev.portfolio ? ev.portfolio.equity : null,
+      options_level: null,
+      open_spreads: [],
+      open_risk: null,
+      warnings: [],
+      exits: [],
+      candidates: [],
+      entries: dec.new_entry ? [{
+        symbol: dec.symbol, direction: dec.new_entry.direction,
+        thesis: dec.new_entry.thesis, model: dec.model,
+        screen_rejections: null, spread: null, qty: null, rejected: null
+      }] : [],
+      outcome: raw.outcome || "—",
+      error: raw.error || null,
+    };
+  }
+  return {
+    legacy: false,
+    cycle_id: raw.cycle_id,
+    started: parseTs(raw.started_at),
+    dry_run: !!raw.dry_run,
+    market_open: raw.market_open ?? null,
+    equity: raw.equity ?? null,
+    options_level: raw.options_level ?? null,
+    open_spreads: raw.open_spreads || [],
+    open_risk: raw.open_risk ?? null,
+    warnings: raw.warnings || [],
+    exits: raw.exits || [],
+    candidates: raw.candidates || [],
+    entries: raw.entries || (raw.entry ? [raw.entry] : []),  // rows before 2026-09-02 carry one `entry`
+    outcome: raw.outcome || "—",
+    error: raw.error || null,
+  };
+}
+
+const OUTCOME_COLOR = {
+  submitted: "var(--good)",
+  planned: "color-mix(in oklab, var(--good) 45%, var(--surface))",
+  entered: "color-mix(in oklab, var(--good) 45%, var(--surface))",
+  hold: "var(--baseline)", market_closed: "var(--grid)",
+  error: "var(--critical)",
+};
+function outcomeClass(o) {
+  return ["submitted","planned","entered","hold","market_closed","error"].includes(o) ? "outcome-" + o : "outcome-other";
+}
+function eventClass(e) {
+  if (/up$/.test(e)) return "event-up";
+  if (/down$/.test(e)) return "event-down";
+  return "";
+}
+function dirHtml(d) {
+  if (d === "CALL") return '<span class="dir-call">▲ CALL</span>';
+  if (d === "PUT") return '<span class="dir-put">▼ PUT</span>';
+  return esc(d || "—");
+}
+
+/* ---------- tooltip ---------- */
+const tip = $("tip");
+function bindTips(root) {
+  root.querySelectorAll("[data-tip]").forEach(el => {
+    el.addEventListener("pointerenter", () => { tip.textContent = el.dataset.tip; tip.style.display = "block"; });
+    el.addEventListener("pointermove", (e) => {
+      tip.style.left = Math.min(e.clientX + 12, window.innerWidth - tip.offsetWidth - 8) + "px";
+      tip.style.top = (e.clientY + 14) + "px";
+    });
+    el.addEventListener("pointerleave", () => { tip.style.display = "none"; });
+  });
+}
+
+/* ---------- rendering ---------- */
+let cycles = [];      // newest first
+let selected = 0;
+let realizedByOrder = new Map();  // exit client_order_id -> realized.json row, filled after boot
+let emaPeriods = null;            // {fast, slow} from config.json, labels the trend column
+
+// Signed dollar distance from a trend EMA, coloured by side (+ above / − below the anchor).
+const trendVal = (v) => v == null ? '<span class="empty">—</span>'
+  : `<span class="${v > 0 ? "pnl-pos" : v < 0 ? "pnl-neg" : ""}">${(v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(2)}</span>`;
+
+function render() {
+  const latest = cycles[0];
+
+  // masthead badges
+  $("badges").innerHTML = [
+    latest.dry_run
+      ? '<span class="badge"><span class="dot" style="background:var(--accent)"></span>Dry run</span>'
+      : '<span class="badge"><span class="dot" style="background:var(--critical)"></span>Live orders</span>',
+    latest.market_open == null ? "" : latest.market_open
+      ? '<span class="badge"><span class="dot" style="background:var(--good)"></span>Market open</span>'
+      : '<span class="badge"><span class="dot" style="background:var(--baseline)"></span>Market closed</span>',
+  ].join("");
+  $("lastCycleTime").textContent = latest.started ? "last cycle " + etFull.format(latest.started) + " ET" : "";
+
+  // KPIs
+  const entryAttempts = cycles.reduce((n, c) => n + c.entries.length, 0);
+  const exitCount = cycles.reduce((n, c) => n + c.exits.length, 0);
+  const days = groupByDay(cycles);
+  $("kpis").innerHTML = `
+    <div class="kpi"><div class="label">Equity</div><div class="value">${fmtUsd(latest.equity)}</div><div class="note">paper account</div></div>
+    <div class="kpi"><div class="label">Open spreads</div><div class="value">${latest.open_spreads.length}</div><div class="note">open risk ${fmtUsd(latest.open_risk)}</div></div>
+    <div class="kpi"><div class="label">Last outcome</div><div class="value" style="font-size:18px;padding-top:5px"><span class="pill ${outcomeClass(latest.outcome)}">${esc(latest.outcome)}</span></div><div class="note">${latest.started ? etTime.format(latest.started) + " ET" : ""}</div></div>
+    <div class="kpi"><div class="label">Cycles logged</div><div class="value">${cycles.length}</div><div class="note">${days.length} day${days.length === 1 ? "" : "s"} · ${entryAttempts} entries · ${exitCount} exits</div></div>
+    <div class="kpi"><div class="label">Options level</div><div class="value">${latest.options_level ?? "—"}</div><div class="note">account approval</div></div>`;
+
+  // outcome strip: one row per trading day (newest first), cells oldest -> newest within the day
+  const cellHtml = (idx) => {
+    const c = cycles[idx];
+    const ex = exitSummary(c);
+    return `<button class="cell ${idx === selected ? "sel" : ""} ${c.outcome === "submitted" ? "cell-submitted" : ""} ${c.exits.length ? "cell-exit" : ""}" data-idx="${idx}"
+      style="background:${OUTCOME_COLOR[c.outcome] || "var(--baseline)"}"
+      data-tip="${c.started ? etTime.format(c.started) + " ET" : esc(c.cycle_id)} · ${esc(c.outcome)}${ex ? " · " + esc(ex) : ""}"
+      aria-label="cycle ${esc(c.cycle_id)}, outcome ${esc(c.outcome)}${ex ? ", " + esc(ex) : ""}"></button>`;
+  };
+  $("strip").innerHTML = days.map(d => `<div class="strip-day">
+      <div class="strip-day-label">${esc(d.label)}<small>${d.idxs.length}</small></div>
+      <div class="strip-cells">${d.idxs.slice().reverse().map(cellHtml).join("")}</div>
+    </div>`).join("");
+  $("strip").querySelectorAll(".cell").forEach(b =>
+    b.addEventListener("click", () => select(+b.dataset.idx)));
+
+  // cycle list: collapsible day groups, latest day open
+  $("cycleCount").textContent = `${cycles.length} cycles · ${days.length} day${days.length === 1 ? "" : "s"}`;
+  const rowHtml = (i) => {
+    const c = cycles[i];
+    const bits = [];
+    if (c.exits.length) bits.push(esc(exitSummary(c)));
+    if (c.outcome === "market_closed") bits.push("market closed — no action");
+    else if (c.entries.length) {
+      for (const e of c.entries) bits.push(`<b>${esc(e.symbol)}</b> ${e.direction === "CALL" ? "call" : e.direction === "PUT" ? "put" : ""} spread` +
+        (e.rejected ? ` — <span style="color:var(--critical)">${esc(e.rejected)}</span>` : " — submitted"));
+    } else if (!c.exits.length) bits.push("no entry candidate");
+    return `<button class="cycle-row ${i === selected ? "sel" : ""}" data-idx="${i}">
+      <span class="top">
+        <span class="time">${c.started ? etTime.format(c.started) : "—"}</span>
+        <span class="pill ${outcomeClass(c.outcome)}">${esc(c.outcome)}</span>
+        ${c.warnings.length ? `<span class="warn-flag" data-tip="${esc(c.warnings.join("; "))}">⚠ ${c.warnings.length}</span>` : ""}
+        ${c.legacy ? '<span class="chip">legacy</span>' : ""}
+      </span>
+      <span class="summary">${bits.join(" · ")}</span>
+    </button>`;
+  };
+  $("cycleList").innerHTML = days.map((d, di) => {
+    const dayCycles = d.idxs.map(i => cycles[i]);
+    const entries = dayCycles.reduce((n, c) => n + c.entries.length, 0);
+    const exits = dayCycles.reduce((n, c) => n + c.exits.length, 0);
+    const warns = dayCycles.reduce((n, c) => n + c.warnings.length, 0);
+    const counts = [`${d.idxs.length} cycles`, entries ? `${entries} entr${entries === 1 ? "y" : "ies"}` : "",
+      exits ? `${exits} exit${exits === 1 ? "" : "s"}` : "", warns ? `⚠ ${warns}` : ""].filter(Boolean).join(" · ");
+    return `<details class="day" data-day="${esc(d.key)}"${di === 0 || d.idxs.includes(selected) ? " open" : ""}>
+      <summary class="day-head"><span class="date">${esc(d.label)}</span><span class="counts">${counts}</span></summary>
+      ${d.idxs.map(rowHtml).join("")}
+    </details>`;
+  }).join("");
+  $("cycleList").querySelectorAll(".cycle-row").forEach(b =>
+    b.addEventListener("click", () => select(+b.dataset.idx)));
+
+  renderDetail();
+  bindTips(document.body);
+}
+
+function select(i) {
+  selected = i;
+  $("strip").querySelectorAll(".cell").forEach(b => b.classList.toggle("sel", +b.dataset.idx === i));
+  $("cycleList").querySelectorAll(".cycle-row").forEach(b => b.classList.toggle("sel", +b.dataset.idx === i));
+  // Make sure the selected row is visible: expand its day and scroll it into view.
+  const row = $("cycleList").querySelector(`.cycle-row[data-idx="${i}"]`);
+  if (row) {
+    const day = row.closest("details");
+    if (day && !day.open) day.open = true;
+    row.scrollIntoView({ block: "nearest" });
+  }
+  if (cycles[i]?.cycle_id) history.replaceState(null, "", "#cycle=" + encodeURIComponent(cycles[i].cycle_id));
+  renderDetail();
+  bindTips($("detail"));
+}
+
+function renderDetail() {
+  const c = cycles[selected];
+  $("detailId").textContent = c.cycle_id;
+  const parts = [];
+
+  parts.push(`<div class="detail-meta">
+    <span>started <b class="mono">${c.started ? etFull.format(c.started) + " ET" : "—"}</b></span>
+    <span>mode <b>${c.dry_run ? "dry run" : "live"}</b></span>
+    <span>equity <b class="mono">${fmtUsd(c.equity)}</b></span>
+    <span>outcome <span class="pill ${outcomeClass(c.outcome)}">${esc(c.outcome)}</span></span>
+  </div>`);
+
+  if (c.error) parts.push(`<div><div class="section-title">Error</div><div class="reject-line">${esc(c.error)}</div></div>`);
+
+  if (c.warnings.length) {
+    parts.push(`<div><div class="section-title">Warnings</div><div class="warn-list">${
+      c.warnings.map(w => `<div class="warn-item">${esc(w)}</div>`).join("")}</div></div>`);
+  }
+
+  if (c.exits.length) {
+    const cards = c.exits.map(x => {
+      if (typeof x === "string") return `<div class="entry-card"><div class="chip mono">${esc(x)}</div></div>`;
+      const sp = parseSpreadLabel(x.spread);
+      const st = exitStatus(x);
+      const coid = x.receipt?.client_order_id;
+      // Only a submitted exit can have a fill. (Two spreads on the same underlying/expiry/type
+      // share a client_order_id, so a failed duplicate must not borrow its sibling's fill.)
+      const fill = coid && st.kind === "ok" ? realizedByOrder.get(coid) : null;
+      const statusHtml =
+        st.kind === "ok" ? `<div class="ok-line">✓ ${esc(st.text)}</div>` :
+        st.kind === "failed" ? `<div class="reject-line">✕ ${esc(st.text)}</div>` :
+        st.kind === "planned" ? `<div class="empty">${esc(st.text)}</div>` :
+        `<div class="warn-item" style="display:inline-block">${esc(st.text)}</div>`;
+      const fillRows = fill ? `
+          <dt>filled credit</dt><dd>$${fmt(fill.exit_credit, 2)}/sh</dd>
+          <dt>entry debit</dt><dd>${fill.entry_debit == null ? "—" : "$" + fmt(fill.entry_debit, 2) + "/sh"}</dd>
+          <dt>qty</dt><dd>${fill.qty}${fill.unmatched_qty ? ` <span class="warn-flag">(${fill.unmatched_qty} unmatched)</span>` : ""}</dd>
+          <dt>realized PnL</dt><dd>${pnlHtml(fill.pnl, fmtSigned(fill.pnl))}${fill.pnl_pct == null ? "" : ` <span style="color:var(--muted)">(${fmtPct(fill.pnl_pct)})</span>`}</dd>
+          <dt>hold</dt><dd>${fmtHold(fill.hold_min)}</dd>`
+        : (st.kind === "ok" ? `<dt>fill</dt><dd class="empty">not in realized.json yet (30-day window, or still working)</dd>` : "");
+      return `<div class="entry-card">
+        <div class="headline"><span class="sym mono">${esc(sp.underlying)}</span>
+          ${sp.type ? dirHtml(sp.type === "C" ? "CALL" : "PUT") : ""}
+          ${sp.expiration ? `<span class="chip mono">${esc(sp.expiration)}</span>` : ""}
+          <span class="pill ${exitReasonClass(x.reason)}">${esc(EXIT_REASON_LABEL[x.reason] || x.reason || "exit")}</span></div>
+        ${statusHtml}
+        <dl class="kv">
+          <dt>mark at decision</dt><dd>${x.net_mark == null ? "—" : "$" + fmt(x.net_mark, 2) + "/sh"}</dd>
+          ${fillRows}
+          ${coid ? `<dt>order</dt><dd><span class="chip mono">${esc(coid)}</span></dd>` : ""}
+        </dl>
+      </div>`;
+    }).join("");
+    parts.push(`<div><div class="section-title">Exits · ${c.exits.length}</div><div class="entry-grid">${cards}</div></div>`);
+  }
+
+  if (c.legacy) {
+    parts.push(`<div class="legacy-note">Logged under the earlier verbose schema — candidate and screening detail isn’t comparable, so only the summary fields are shown.</div>`);
+  }
+
+  // candidates table
+  if (c.candidates.length) {
+    const maxMacd = Math.max(...c.candidates.map(x => Math.abs(x.macd_hist ?? 0)), 1e-9);
+    const rows = c.candidates.map(x => {
+      const rsi = x.rsi ?? null;
+      const macd = x.macd_hist ?? null;
+      const macdW = macd == null ? 0 : Math.abs(macd) / maxMacd * 50;
+      const emaF = x.ema_fast_dist ?? null, emaS = x.ema_slow_dist ?? null;
+      const blocked = !!x.gate_block;
+      return `<tr class="${blocked ? "blocked" : ""}">
+        <td><span class="sym">${esc(x.symbol)}</span></td>
+        <td>${(x.events || []).length
+            ? x.events.map(e => `<span class="chip ${eventClass(e)}">${esc(e)}</span>`).join(" ")
+            : '<span class="empty">none</span>'}</td>
+        <td><div class="rsi-wrap" data-tip="RSI ${fmt(rsi, 1)} (30/70 marked)">
+              <div class="rsi-track">
+                <span class="zone" style="left:30%"></span><span class="zone" style="left:70%"></span>
+                <span class="fill" style="width:${rsi == null ? 0 : Math.min(Math.max(rsi, 0), 100)}%"></span>
+              </div><span class="rsi-val">${rsi == null ? "—" : Math.round(rsi)}</span></div></td>
+        <td><div class="macd-wrap" data-tip="MACD histogram ${fmt(macd, 3)}">
+              <div class="macd-track"><span class="axis"></span>
+                ${macd == null ? "" : macd >= 0
+                  ? `<span class="bar" style="left:50%;width:${macdW}%;background:var(--div-pos)"></span>`
+                  : `<span class="bar" style="right:50%;width:${macdW}%;background:var(--div-neg)"></span>`}
+              </div><span class="macd-val">${fmt(macd, 2)}</span></div></td>
+        <td class="num">${fmt(x.atr, 2)}</td>
+        <td class="num">${emaF == null && emaS == null
+            ? '<span class="empty">—</span>'
+            : `<span data-tip="last close − trend EMA ($): fast ${fmt(emaF, 2)} · slow ${fmt(emaS, 2)} · + = above the anchor (up-regime) — advisory, not a gate">${trendVal(emaF)} / ${trendVal(emaS)}</span>`}</td>
+        <td>${blocked
+            ? `<span class="chip">✕ ${esc(x.gate_block)}</span>`
+            : '<span class="ok-line">✓ eligible</span>'}</td>
+      </tr>`;
+    }).join("");
+    const trendHead = emaPeriods ? `EMA Δ ${emaPeriods.fast}/${emaPeriods.slow}` : "EMA Δ fast/slow";
+    parts.push(`<div><div class="section-title">Candidates · ${c.candidates.length} scanned, ${c.candidates.filter(x => !x.gate_block).length} passed gates</div>
+      <div class="tbl-scroll"><table>
+        <thead><tr><th>Symbol</th><th>Events</th><th>RSI</th><th>MACD hist</th><th>ATR</th><th>${trendHead}</th><th>Gate</th></tr></thead>
+        <tbody>${rows}</tbody></table></div></div>`);
+  }
+
+  // entries: one block per attempt (a cycle may take several)
+  c.entries.forEach((e, n) => {
+    const rej = e.screen_rejections || {};
+    const rejEntries = Object.entries(rej).sort((a, b) => b[1] - a[1]);
+    const maxRej = Math.max(...rejEntries.map(x => x[1]), 1);
+    const spreadKv = e.spread ? `<dl class="kv">
+        <dt>long leg</dt><dd>${esc(e.spread.long)}</dd>
+        <dt>short leg</dt><dd>${esc(e.spread.short)}</dd>
+        <dt>expiration</dt><dd>${esc(e.spread.expiration)}</dd>
+        <dt>width</dt><dd>$${fmt(e.spread.width, 2)}</dd>
+        <dt>net debit</dt><dd>$${fmt(e.spread.net_debit, 2)}</dd>
+        <dt>qty</dt><dd>${e.qty ?? "—"}</dd>
+        <dt>skew</dt><dd>${fmt(e.spread.skew, 4)}</dd>
+      </dl>` : '<div class="empty">No spread survived the screen.</div>';
+    const title = c.entries.length > 1 ? `Entry attempt ${n + 1} of ${c.entries.length}` : "Entry attempt";
+    parts.push(`<div><div class="section-title">${title}</div>
+      <div class="entry-grid">
+        <div class="entry-card">
+          <div class="headline"><span class="sym mono">${esc(e.symbol)}</span> ${dirHtml(e.direction)}
+            <span class="chip">${esc(e.model || "?")}</span></div>
+          <div class="thesis">${esc(e.thesis || "")}</div>
+          ${e.rejected
+            ? `<div class="reject-line">✕ rejected — ${esc(e.rejected)}</div>`
+            : (c.legacy ? "" : '<div class="ok-line">✓ passed all checks</div>')}
+          ${spreadKv}
+        </div>
+        <div class="entry-card">
+          <div class="section-title" style="margin-bottom:2px">Contracts screened out</div>
+          ${rejEntries.length ? rejEntries.map(([k, v]) =>
+            `<div class="hbar-row" data-tip="${esc(k)}: ${v} contracts">
+              <span class="hbar-label">${esc(k)}</span>
+              <span class="hbar-track"><span class="bar" style="width:${v / maxRej * 100}%"></span></span>
+              <span class="hbar-count">${v}</span></div>`).join("")
+            : '<div class="empty">No screen data recorded.</div>'}
+        </div>
+      </div></div>`);
+  });
+  if (!c.entries.length && c.outcome !== "market_closed") {
+    parts.push(`<div><div class="section-title">Entry attempt</div><div class="empty">No entry candidate this cycle.</div></div>`);
+  }
+
+  // open spreads
+  if (c.open_spreads.length) {
+    parts.push(`<div><div class="section-title">Open spreads</div>${
+      c.open_spreads.map(s => `<div class="chip mono">${esc(typeof s === "string" ? s : JSON.stringify(s))}</div>`).join(" ")}</div>`);
+  }
+
+  $("detail").innerHTML = parts.join("");
+}
+
+/* ---------- realized tab ---------- */
+function renderRealized(rows) {
+  const root = $("tab-realized");
+  if (!rows) {
+    root.innerHTML = `<div class="panel"><div class="detail-body"><div class="empty">
+      No realized data yet — run <span class="mono">pnl.py realized --json</span>
+      (deploy.sh does this automatically when credentials are available).</div></div></div>`;
+    return;
+  }
+  const sorted = rows.slice().sort((a, b) => (parseTs(b.exited_at)?.getTime() ?? 0) - (parseTs(a.exited_at)?.getTime() ?? 0));
+  const scored = sorted.filter(r => r.pnl != null);
+  const total = scored.length ? scored.reduce((s, r) => s + r.pnl, 0) : null;
+  const winRate = scored.length ? scored.filter(r => r.pnl > 0).length / scored.length : null;
+  const holds = sorted.filter(r => r.hold_min != null);
+  const avgHold = holds.length ? holds.reduce((s, r) => s + r.hold_min, 0) / holds.length : null;
+  const unmatched = sorted.filter(r => r.unmatched_qty > 0);
+
+  const body = sorted.map(r => {
+    const entered = parseTs(r.entered_at), exited = parseTs(r.exited_at);
+    return `<tr${r.unmatched_qty > 0 ? ' class="blocked"' : ""}>
+      <td><span class="sym" data-tip="${esc(r.long_symbol)} / ${esc(r.short_symbol)}">${esc(r.underlying ?? "?")}</span></td>
+      <td>${dirHtml(r.type === "C" ? "CALL" : r.type === "P" ? "PUT" : r.type ?? "—")}</td>
+      <td class="num">${esc(r.expiration ?? "—")}</td>
+      ${widthCell(r.long_symbol, r.short_symbol)}
+      <td class="num">${r.qty}${r.unmatched_qty > 0 ? ` <span class="warn-flag" data-tip="no matching entry fill in the lookback window">⚠ ${r.unmatched_qty} unmatched</span>` : ""}</td>
+      <td class="num">${r.entry_debit == null ? "—" : "$" + fmt(r.entry_debit, 2)}</td>
+      <td class="num">${r.exit_credit == null ? "—" : "$" + fmt(r.exit_credit, 2)}</td>
+      <td class="num">${pnlHtml(r.pnl, fmtSigned(r.pnl))}</td>
+      <td class="num">${pnlHtml(r.pnl, fmtPct(r.pnl_pct))}</td>
+      <td class="num">${entered ? etFull.format(entered) : "—"}</td>
+      <td class="num">${exited ? etFull.format(exited) : "—"}</td>
+      <td class="num">${fmtHold(r.hold_min)}</td>
+    </tr>`;
+  }).join("");
+
+  root.innerHTML = `
+    <div class="kpis">
+      <div class="kpi"><div class="label">Realized PnL</div><div class="value">${pnlHtml(total, fmtSigned(total))}</div><div class="note">closed spreads, 30-day lookback</div></div>
+      <div class="kpi"><div class="label">Closed spreads</div><div class="value">${sorted.length}</div><div class="note">exit fills matched to entries</div></div>
+      <div class="kpi"><div class="label">Win rate</div><div class="value">${winRate == null ? "—" : (winRate * 100).toFixed(0) + "%"}</div><div class="note">${scored.length ? `${scored.filter(r => r.pnl > 0).length} of ${scored.length} profitable` : "no scored exits"}</div></div>
+      <div class="kpi"><div class="label">Avg hold</div><div class="value">${fmtHold(avgHold)}</div><div class="note">entry fill → exit fill</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><span>Closed spreads</span><span>${sorted.length}</span></div>
+      <div class="detail-body">
+        ${sorted.length ? `<div class="tbl-scroll"><table>
+          <thead><tr><th>Underlying</th><th>Type</th><th>Expiration</th><th>Width</th><th>Qty</th>
+            <th>Entry debit/sh</th><th>Exit credit/sh</th><th>PnL</th><th>PnL %</th>
+            <th>Entered (ET)</th><th>Exited (ET)</th><th>Hold</th></tr></thead>
+          <tbody>${body}</tbody></table></div>`
+          : '<div class="empty">No closed spreads in the lookback window.</div>'}
+        ${unmatched.length ? `<div><div class="section-title">Warnings</div><div class="warn-list">${
+          unmatched.map(r => `<div class="warn-item">${esc(r.exit_order)}: ${r.unmatched_qty} of ${r.qty} closed spreads have no matching entry fill in the lookback window</div>`).join("")}</div></div>` : ""}
+        <div class="empty" style="margin-top:10px">Matched first-in-first-out by leg pair from filled MLEG orders · hover an underlying for its legs · paper account, no fees.</div>
+      </div>
+    </div>`;
+}
+
+/* ---------- theme toggle ---------- */
+// Click flips the theme and saves it; the saved choice wins over the OS setting on later visits.
+// Until a choice is saved, follow live OS changes.
+$("themeToggle").addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("paca-theme", next); } catch (e) { /* storage blocked: theme still flips for this visit */ }
+});
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
+  let saved = null;
+  try { saved = localStorage.getItem("paca-theme"); } catch (err) {}
+  if (saved !== "dark" && saved !== "light") document.documentElement.dataset.theme = e.matches ? "dark" : "light";
+});
+
+/* ---------- tabs ---------- */
+document.querySelectorAll(".tab").forEach(btn => btn.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("sel", b === btn));
+  for (const name of ["cycles", "positions", "realized", "config"])
+    $("tab-" + name).hidden = name !== btn.dataset.tab;
+}));
+
+/* ---------- positions tab ---------- */
+function renderPositions(snap, pnlRows) {
+  const root = $("tab-positions");
+  if (!snap) {
+    root.innerHTML = `<div class="panel"><div class="detail-body"><div class="empty">
+      No account snapshot yet — run <span class="mono">cli.py account --export</span>
+      (deploy.sh does this automatically when credentials are available).</div></div></div>`;
+    return;
+  }
+  const at = parseTs(snap.generated_at);
+  const ageMin = at ? (Date.now() - at.getTime()) / 60000 : null;
+  const spreads = snap.spreads || [];
+  // Open PnL rows from pnl.py positions --json, joined on the leg pair.
+  const pnlByKey = new Map((pnlRows || []).map(r => [r.long_symbol + "|" + r.short_symbol, r]));
+  let openPnl = null;
+  for (const r of pnlRows || []) if (r.unrealized_pl != null) openPnl = (openPnl ?? 0) + r.unrealized_pl;
+  const rows = spreads.map(s => {
+    const dte = dteFrom(s.expiration);
+    const debit = s.net_entry_debit;
+    const maxRisk = debit == null ? null : debit * s.qty * 100;
+    const p = pnlByKey.get(s.long_symbol + "|" + s.short_symbol) || {};
+    return `<tr>
+      <td><span class="sym">${esc(s.underlying)}</span></td>
+      <td>${dirHtml(s.option_type === "C" ? "CALL" : s.option_type === "P" ? "PUT" : s.option_type)}</td>
+      <td class="num">${esc(s.expiration)}${dte == null ? "" : ` <span style="color:var(--muted)">(${dte}d)</span>`}</td>
+      ${widthCell(s.long_symbol, s.short_symbol)}
+      <td class="num">${s.qty}</td>
+      <td><span class="chip mono">${esc(s.long_symbol)}</span></td>
+      <td><span class="chip mono">${esc(s.short_symbol)}</span></td>
+      <td class="num">${debit == null ? "—" : "$" + fmt(debit, 2)}</td>
+      <td class="num">${p.mark == null ? "—" : "$" + fmt(p.mark, 2)}</td>
+      <td class="num">${pnlHtml(p.unrealized_pl, fmtSigned(p.unrealized_pl))}</td>
+      <td class="num">${pnlHtml(p.unrealized_pl, fmtPct(p.unrealized_pct))}</td>
+      <td class="num">${maxRisk == null ? "—" : fmtUsd(maxRisk)}</td>
+    </tr>`;
+  }).join("");
+  const warnings = (snap.warnings || []).concat(
+    (snap.unparsed_positions || []).map(p => "unparsed position: " + p));
+  root.innerHTML = `
+    <div class="snapshot-meta">
+      <span>snapshot <b class="mono">${at ? etFull.format(at) + " ET" : "—"}</b></span>
+      ${ageMin != null && ageMin > 60 ? `<span class="stale">⚠ ${Math.round(ageMin / 60)}h old — rerun deploy.sh for fresh data</span>` : ""}
+      ${pnlRows ? "" : `<span class="stale">no positions.json — run <span class="mono">pnl.py positions --json</span> for open PnL</span>`}
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="label">Equity</div><div class="value">${fmtUsd(snap.equity)}</div><div class="note">paper account</div></div>
+      <div class="kpi"><div class="label">Open PnL</div><div class="value">${pnlHtml(openPnl, fmtSigned(openPnl))}</div><div class="note">Alpaca marks, unrealized</div></div>
+      <div class="kpi"><div class="label">Open premium at risk</div><div class="value">${fmtUsd(snap.open_risk)}</div><div class="note">total entry debit held</div></div>
+      <div class="kpi"><div class="label">Open spreads</div><div class="value">${spreads.length}</div><div class="note">debit verticals</div></div>
+      <div class="kpi"><div class="label">Options level</div><div class="value">${snap.options_level ?? "—"}</div><div class="note">account approval</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><span>Open spreads</span><span>${spreads.length}</span></div>
+      <div class="detail-body">
+        ${spreads.length ? `<div class="tbl-scroll"><table>
+          <thead><tr><th>Underlying</th><th>Type</th><th>Expiration</th><th>Width</th><th>Qty</th>
+            <th>Long leg</th><th>Short leg</th><th>Entry debit/sh</th><th>Mark/sh</th>
+            <th>Unrealized</th><th>PnL %</th><th>Max risk</th></tr></thead>
+          <tbody>${rows}</tbody></table></div>`
+          : '<div class="empty">No open spreads.</div>'}
+        ${warnings.length ? `<div><div class="section-title">Warnings</div><div class="warn-list">${
+          warnings.map(w => `<div class="warn-item">${esc(w)}</div>`).join("")}</div></div>` : ""}
+      </div>
+    </div>`;
+}
+
+/* ---------- config tab ---------- */
+const fmtPctSpot = v => (v * 100).toLocaleString() + "% of spot";
+const CONFIG_SECTIONS = [
+  { key: null, title: "General", labels: {
+    bar_timeframe: ["signal bar duration", String],
+    loop_interval_seconds: ["cycle interval", v => `${v}s (${Math.round(v / 60)} min)`],
+  }},
+  { key: "signals", title: "Signals & entry events", labels: {
+    rsi_period: ["RSI period (bars)", String],
+    atr_period: ["ATR period (bars)", String],
+    macd_fast: ["MACD fast EMA", String],
+    macd_slow: ["MACD slow EMA", String],
+    macd_signal: ["MACD signal EMA", String],
+    atr_event_mult: ["gap/breakout threshold", v => v + "× ATR"],
+    macd_min_hist_atr: ["MACD cross min |histogram|", v => v + "× ATR"],
+    rsi_overbought: ["RSI overbought (drops CALL entries)", v => "≥ " + v],
+    rsi_oversold: ["RSI oversold (drops PUT entries)", v => "≤ " + v],
+    trend_ema_fast: ["trend EMA fast (advisory)", v => v + " bars"],
+    trend_ema_slow: ["trend EMA slow (advisory)", v => v + " bars"],
+    stale_bar_factor: ["stale-bar entry block", v => v + "× bar duration"],
+    min_bars: ["min bars before trading", String],
+  }},
+  { key: "screener", title: "Spread screener", labels: {
+    min_dte: ["min days to expiry", String],
+    max_expiry_lookahead_days: ["max expiry lookahead", v => v + " days"],
+    expiries_to_screen: ["expiries screened per entry", String],
+    strike_band_pct: ["strike band", v => "±" + fmtPctSpot(v)],
+    otm_only: ["OTM strikes only (+1 ATM)", v => v ? "on" : "off"],
+    min_width_pct: ["min spread width", fmtPctSpot],
+    max_width_pct: ["max spread width", fmtPctSpot],
+    min_open_interest: ["min open interest / leg", String],
+    max_quote_age_seconds: ["max quote age", v => v + "s"],
+    max_leg_spread_bps: ["max leg bid-ask spread", v => v + " bps"],
+    min_net_debit: ["min net debit", v => "$" + fmt(v, 2) + "/share"],
+    min_debit_frac: ["min debit", v => (v * 100).toLocaleString() + "% of width"],
+    max_debit_frac: ["max debit", v => (v * 100).toLocaleString() + "% of width"],
+  }},
+  { key: "risk", title: "Risk limits (fractions of equity)", labels: {
+    per_entry_fraction: ["one entry's debit", null],
+    per_underlying_fraction: ["open risk per underlying", null],
+    per_cycle_fraction: ["new premium per cycle", null],
+    total_fraction: ["total open premium", null],
+  }},
+  { key: "exits", title: "Mechanical exits", labels: {
+    stop_fraction: ["stop-loss", v => `net mark ≤ ${(v * 100).toLocaleString()}% of entry debit`],
+    take_profit_mult: ["take-profit", v => `net mark ≥ ${v}× entry debit`],
+    exit_dte: ["force exit at", v => v + " DTE"],
+    reversal_exit: ["exit on opposing entry event", v => v ? "on" : "off"],
+  }},
+];
+
+function renderConfig(cfg, equity) {
+  const root = $("tab-config");
+  if (!cfg) {
+    root.innerHTML = `<div class="panel"><div class="detail-body"><div class="empty">
+      No config snapshot — rerun deploy.sh to publish one.</div></div></div>`;
+    return;
+  }
+  const riskFmt = v => `${(v * 100).toLocaleString()}%` +
+    (equity ? ` <span style="color:var(--muted)">≈ ${fmtUsd(v * equity)}</span>` : "");
+  const cards = CONFIG_SECTIONS.map(section => {
+    const source = section.key ? cfg[section.key] : cfg;
+    if (!source) return "";
+    const keys = section.key ? Object.keys(source) : Object.keys(section.labels).filter(k => k in cfg);
+    const rows = keys.map(k => {
+      const [label, format] = section.labels[k] || [k, null];
+      const value = format ? format(source[k])
+        : section.key === "risk" && typeof source[k] === "number" ? riskFmt(source[k])
+        : esc(String(source[k]));
+      return `<dt>${esc(label)}</dt><dd>${value}</dd>`;
+    }).join("");
+    return `<div class="cfg-card"><div class="section-title">${esc(section.title)}</div>
+      <dl class="kv">${rows}</dl></div>`;
+  }).join("");
+  root.innerHTML = `
+    <div class="snapshot-meta"><span>From <b class="mono">settings.yaml</b> at deploy time · whitelist:</span></div>
+    <div class="sym-chips" style="margin-bottom:14px">${
+      (cfg.symbols || []).map(s => `<span class="chip mono">${esc(s)}</span>`).join("")}</div>
+    <div class="cfg-grid">${cards}</div>`;
+}
+
+/* ---------- boot ---------- */
+fetch("cycles.jsonl", { cache: "no-store" })
+  .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+  .then(text => {
+    const parsed = [];
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      try { parsed.push(normalize(JSON.parse(line))); } catch { /* skip malformed line */ }
+    }
+    if (!parsed.length) throw new Error("no parsable cycles in cycles.jsonl");
+    parsed.sort((a, b) => (b.started?.getTime() ?? 0) - (a.started?.getTime() ?? 0));
+    cycles = parsed;
+    // Deep link: #cycle=<cycle_id> preselects a cycle; otherwise the newest.
+    const wanted = decodeURIComponent((location.hash.match(/^#cycle=(.+)$/) || [])[1] || "");
+    const found = wanted ? cycles.findIndex(c => c.cycle_id === wanted) : -1;
+    selected = found >= 0 ? found : 0;
+    $("app").hidden = false;
+    render();
+    if (found >= 0) $("cycleList").querySelector(`.cycle-row[data-idx="${found}"]`)?.scrollIntoView({ block: "nearest" });
+  })
+  .catch(err => {
+    const el = $("err");
+    el.style.display = "block";
+    el.innerHTML = `<p><strong>Couldn’t load cycle data.</strong></p>
+      <p>${esc(err.message)} — redeploy with a fresh copy of <code>logs/cycles.jsonl</code>.</p>`;
+  });
+
+const asJson = (r) => (r.ok ? r.json() : null);
+Promise.all([
+  fetch("account.json", { cache: "no-store" }).then(asJson).catch(() => null),
+  fetch("config.json", { cache: "no-store" }).then(asJson).catch(() => null),
+  fetch("positions.json", { cache: "no-store" }).then(asJson).catch(() => null),
+  fetch("realized.json", { cache: "no-store" }).then(asJson).catch(() => null),
+]).then(([acct, cfg, positions, realized]) => {
+  renderPositions(acct, Array.isArray(positions) ? positions : null);
+  renderRealized(Array.isArray(realized) ? realized : null);
+  renderConfig(cfg, acct?.equity ?? null);
+  bindTips($("tab-positions"));
+  bindTips($("tab-realized"));
+  if (cfg?.signals?.trend_ema_fast != null && cfg?.signals?.trend_ema_slow != null) {
+    emaPeriods = { fast: cfg.signals.trend_ema_fast, slow: cfg.signals.trend_ema_slow };
+  }
+  // Exit cards join realized fills by client_order_id; the trend column header uses
+  // the configured EMA periods — refresh the detail now that both are known.
+  if (Array.isArray(realized)) {
+    realizedByOrder = new Map(realized.filter(r => r.exit_order).map(r => [r.exit_order, r]));
+  }
+  if (cycles.length) { renderDetail(); bindTips($("detail")); }
+});
+</script>
+</body>
+</html>

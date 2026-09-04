@@ -16,7 +16,7 @@ def shipped_raw() -> dict:
 def test_shipped_settings_file_validates():
     values = settings.load_settings()
     assert values["SYMBOLS"][0] == "SPY"
-    assert values["BAR_SECONDS"] in (300, 900)
+    assert values["BAR_SECONDS"] == 300  # shipped file trades 5m bars
     assert 0 < values["STOP_FRACTION"] < 1
 
 
@@ -56,6 +56,16 @@ def broken(mutate) -> dict:
         (lambda r: r.update(symbols="SPY"), "symbols"),  # string, not a list
         (lambda r: r["llm"].update(primary_model=""), "llm.primary_model"),
         (lambda r: r["exits"].update(reversal_exit=1), "exits.reversal_exit"),  # must be a bool
+        (lambda r: r["risk"].update(allow_stacking=1), "risk.allow_stacking"),  # must be a bool
+        (lambda r: r["signals"].update(macd_min_hist_atr=1.5), "signals.macd_min_hist_atr"),
+        (lambda r: r["signals"].update(rsi_overbought=40), "signals.rsi_overbought"),  # < 50
+        (lambda r: r["signals"].update(rsi_oversold=60), "signals.rsi_oversold"),  # > 50
+        (lambda r: r["signals"].update(rsi_overbought=50, rsi_oversold=50), "signals.rsi_oversold"),  # >= overbought
+        (lambda r: r["screener"].update(min_debit_frac=0), "screener.min_debit_frac"),
+        (lambda r: r["screener"].update(max_debit_frac=1), "screener.max_debit_frac"),
+        (lambda r: r["screener"].update(min_debit_frac=0.5, max_debit_frac=0.4), "screener.min_debit_frac"),  # > max
+        (lambda r: r["signals"].update(trend_ema_fast=0), "signals.trend_ema_fast"),
+        (lambda r: r["signals"].update(trend_ema_fast=50, trend_ema_slow=50), "signals.trend_ema_fast"),  # >= slow
     ],
 )
 def test_validate_rejects_and_names_the_key(mutate, expect_in_message):

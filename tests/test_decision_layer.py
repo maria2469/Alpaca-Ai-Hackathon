@@ -77,6 +77,22 @@ def test_decide_entry_end_to_end():
     assert choice is not None and choice.symbol == "QQQ" and choice.model == "test-model"
 
 
+def test_decide_entry_briefing_marks_adds_with_held_direction():
+    seen = {}
+
+    def handler(request):
+        seen["briefing"] = json.loads(json.loads(request.content)["messages"][1]["content"])
+        return httpx.Response(200, json=chat_body(json.dumps({"action": "pass"})))
+
+    from dataclasses import replace
+
+    add = replace(candidate("NVDA"), held="CALL")
+    decision_layer.decide_entry([candidate("SPY"), add], "key", transport=httpx.MockTransport(handler))
+    by_symbol = {c["symbol"]: c for c in seen["briefing"]["candidates"]}
+    assert by_symbol["NVDA"]["held"] == "CALL"
+    assert by_symbol["SPY"]["held"] is None
+
+
 def test_decide_entry_skips_blocked_candidates_entirely():
     # only blocked candidates -> no LLM call is even attempted (transport would 500)
     blocked = [candidate("SPY", block="stale_data")]
@@ -130,6 +146,19 @@ def test_manual_garbage_or_blank_input_is_a_pass(answer):
         echo=silent,
     )
     assert choice is None  # no order ever results from garbage input
+
+
+@pytest.mark.parametrize("answers", [[], ["1"]])  # EOF at the number prompt, or at the direction prompt
+def test_manual_end_of_input_is_a_pass(answers):
+    queue = iter(answers)
+
+    def piped(prompt):
+        try:
+            return next(queue)
+        except StopIteration:
+            raise EOFError
+
+    assert decision_layer.manual_decide([candidate()], input_fn=piped, echo=lambda s: None) is None
 
 
 def test_manual_never_prompts_without_candidates():

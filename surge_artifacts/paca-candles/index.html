@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PACA · Candles</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦙</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script>
+  // Theme: a saved choice wins; otherwise follow the OS. Runs before paint to avoid a flash.
+  (function () {
+    let saved = null;
+    try { saved = localStorage.getItem("paca-theme"); } catch (e) {}
+    const system = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    document.documentElement.dataset.theme = saved === "dark" || saved === "light" ? saved : system;
+  })();
+</script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+img { max-width: 100%; }
+
+:root {
+  color-scheme: light;
+  --page:        #f9f9f7;
+  --surface:     #fcfcfb;
+  --ink:         #0b0b0b;
+  --ink-2:       #52514e;
+  --muted:       #898781;
+  --grid:        #e1e0d9;
+  --baseline:    #c3c2b7;
+  --border:      rgba(11,11,11,0.10);
+  --accent:      #2a78d6;
+  --accent-soft: #cde2fb;
+  --div-pos:     #2a78d6;
+  --div-neg:     #e34948;
+  --div-mid:     #f0efec;
+  --good:        #0ca30c;
+  --good-text:   #006300;
+  --warning:     #fab219;
+  --critical:    #d03b3b;
+  --chip:        #f0efec;
+  --ema-slow:    #b8860b;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page:        #0d0d0d;
+  --surface:     #1a1a19;
+  --ink:         #ffffff;
+  --ink-2:       #c3c2b7;
+  --muted:       #898781;
+  --grid:        #2c2c2a;
+  --baseline:    #383835;
+  --border:      rgba(255,255,255,0.10);
+  --accent:      #3987e5;
+  --accent-soft: #10315c;
+  --div-pos:     #3987e5;
+  --div-neg:     #e66767;
+  --div-mid:     #383835;
+  --good-text:   #0ca30c;
+  --chip:        #2c2c2a;
+  --ema-slow:    #e0b04a;
+}
+
+body {
+  background: var(--page);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
+
+header {
+  display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+  padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--surface);
+}
+header h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.01em; }
+header .sub { color: var(--muted); font-size: 12px; }
+header .spacer { flex: 1; }
+header a { color: var(--accent); text-decoration: none; font-size: 12px; }
+header a:hover { text-decoration: underline; }
+button.ghost {
+  border: 1px solid var(--border); background: var(--surface); color: var(--ink-2);
+  border-radius: 6px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer;
+}
+button.ghost:hover { border-color: var(--baseline); color: var(--ink); }
+:root[data-theme="dark"] .when-light, :root:not([data-theme="dark"]) .when-dark { display: none; }
+
+.layout { display: grid; grid-template-columns: 220px 1fr; min-height: calc(100vh - 52px); }
+nav.rail { border-right: 1px solid var(--border); background: var(--surface); padding: 10px 0; }
+nav.rail .label { padding: 6px 16px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+nav.rail button.sym {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px;
+  width: 100%; text-align: left; padding: 7px 16px; border: 0; border-left: 3px solid transparent;
+  background: transparent; color: var(--ink); font: inherit; cursor: pointer;
+}
+nav.rail button.sym:hover { background: var(--chip); }
+nav.rail button.sym.active { border-left-color: var(--accent); background: var(--chip); }
+nav.rail .name { font-weight: 600; font-size: 13px; }
+nav.rail .meta { display: flex; gap: 6px; align-items: center; font-size: 11px; color: var(--muted); }
+.chip { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--chip); color: var(--ink-2); font-size: 11px; }
+.chip.pos { background: var(--accent-soft); color: var(--ink); }
+.chip.neg { background: var(--div-neg); color: #fff; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warning); display: inline-block; }
+
+main { padding: 14px 20px 32px; min-width: 0; }
+.strip {
+  display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: baseline;
+  padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); margin-bottom: 12px;
+}
+.strip .sym { font-size: 22px; font-weight: 600; margin-right: 6px; }
+.stat { display: flex; flex-direction: column; }
+.stat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.stat .v { font-size: 14px; }
+.stat .v.up { color: var(--good-text); } .stat .v.down { color: var(--critical); }
+.controls { display: flex; gap: 14px; align-items: center; margin: 0 0 8px; font-size: 12px; color: var(--ink-2); flex-wrap: wrap; }
+.controls label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+.views { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.views button { border: 0; background: var(--surface); color: var(--ink-2); font: inherit; font-size: 12px; padding: 3px 10px; cursor: pointer; border-right: 1px solid var(--border); }
+.views button:last-child { border-right: 0; }
+.views button:hover { color: var(--ink); }
+.views button.active { background: var(--accent); color: #fff; }
+.legend { display: inline-flex; gap: 12px; flex-wrap: wrap; color: var(--muted); }
+.legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 4px; vertical-align: -1px; border-radius: 2px; }
+.legend .c::before { background: var(--div-pos); opacity: .5; }
+.legend .p::before { background: var(--div-neg); opacity: .5; }
+.legend .e11::before { background: var(--accent); height: 2px; }
+.legend .e22::before { background: var(--ema-slow); height: 2px; }
+.legend .ev.gap::before { background: var(--muted); transform: rotate(45deg) scale(.8); }
+.legend .ev.brk::before { background: var(--muted); }
+.legend .ev.macd::before { background: var(--muted); border-radius: 50%; }
+.legend .ev.dir::before { display: none; }
+
+#chart { width: 100%; height: 760px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.empty { display: grid; place-items: center; height: 100%; color: var(--muted); }
+
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 18px 0 8px; font-weight: 600; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+th, td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+th:first-child, td:first-child, td.l, th.l { text-align: left; }
+tr:last-child td { border-bottom: 0; }
+td.pos { color: var(--good-text); } td.neg { color: var(--critical); }
+td.thesis { white-space: normal; max-width: 34ch; color: var(--ink-2); text-align: left; }
+.pill { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px; background: var(--chip); color: var(--ink-2); }
+.pill.open { background: var(--warning); color: #111; }
+.pill.C { background: var(--accent-soft); color: var(--ink); }
+.pill.P { background: var(--div-neg); color: #fff; }
+
+#err { display: none; margin: 20px; padding: 14px; border: 1px solid var(--critical); border-radius: 8px; color: var(--critical); background: var(--surface); }
+.warnings { margin-top: 14px; font-size: 12px; color: var(--ink-2); }
+.warnings li { margin-left: 18px; }
+footer { padding: 10px 20px 24px; color: var(--muted); font-size: 11px; }
+
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  nav.rail { display: flex; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 6px 8px; }
+  nav.rail .label { display: none; }
+  nav.rail button.sym { width: auto; border-left: 0; border-bottom: 3px solid transparent; padding: 6px 10px; grid-template-columns: auto; }
+  nav.rail button.sym.active { border-bottom-color: var(--accent); }
+  nav.rail .meta { display: none; }
+  #chart { height: 640px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>PACA · Candles</h1>
+  <span class="sub">Vertical spread entries &amp; exits over 5m bars · RSI · ATR · MACD · EMA 11/22</span>
+  <span class="spacer"></span>
+  <a href="https://alpaca-hackathon-2026-artifacts-paca-cycles.surge.sh">Cycle monitor →</a>
+  <button class="ghost" id="themeToggle" type="button"><span class="when-light">Dark</span><span class="when-dark">Light</span></button>
+</header>
+
+<div id="err"></div>
+
+<div class="layout">
+  <nav class="rail" id="rail"><div class="label">Whitelist</div></nav>
+  <main>
+    <div class="strip" id="strip"></div>
+    <div class="controls">
+      <span class="views" id="views" title="Trading days shown">
+        <button type="button" data-days="1">1d</button><button type="button" data-days="5" class="active">5d</button><button type="button" data-days="21">1m</button><button type="button" data-days="0">All</button>
+      </span>
+      <label><input type="checkbox" id="rthOnly" checked> Regular hours only</label>
+      <label><input type="checkbox" id="showEvents" checked> Event markers</label>
+      <span class="legend">
+        <span class="c">CALL spread</span><span class="p">PUT spread</span>
+        <span class="e11">EMA 11</span><span class="e22">EMA 22</span>
+        <span class="ev gap">gap</span><span class="ev brk">breakout</span><span class="ev macd">MACD cross</span>
+        <span class="ev dir">green up · red down</span>
+      </span>
+    </div>
+    <div id="chart"></div>
+    <h2>Spreads</h2>
+    <div class="tablewrap"><table id="spreads"></table></div>
+    <div class="warnings" id="warnings"></div>
+  </main>
+</div>
+<footer id="foot"></footer>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const ET = "America/New_York";
+const fmtParts = new Intl.DateTimeFormat("en-US", { timeZone: ET, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+function etString(epoch) {
+  // Plotly date axes take zone-less strings; render every stamp in US Eastern.
+  const p = Object.fromEntries(fmtParts.formatToParts(new Date(epoch * 1000)).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+}
+const etShort = (epoch) => epoch == null ? "—" : new Intl.DateTimeFormat("en-US", { timeZone: ET, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(epoch * 1000));
+const fmtUsd = (v) => v == null ? "—" : (v < 0 ? "−" : "") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtPct = (v) => v == null ? "—" : (v < 0 ? "−" : "+") + (Math.abs(v) * 100).toFixed(1) + "%";
+const fmtNum = (v, d = 2) => v == null ? "—" : Number(v).toFixed(d);
+const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const rgba = (hex, a) => {
+  const n = parseInt(hex.replace("#", ""), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+};
+
+let DATA = null;
+let COL = {};
+let current = null;
+let viewDays = 5; // trading days shown (1m = 21); 0 = everything exported
+
+// --- theme ---
+$("themeToggle").addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("paca-theme", next); } catch (e) {}
+  if (current) draw(current);
+});
+$("rthOnly").addEventListener("change", () => current && draw(current));
+$("views").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-days]");
+  if (!b) return;
+  viewDays = Number(b.dataset.days);
+  document.querySelectorAll("#views button").forEach((x) => x.classList.toggle("active", x === b));
+  if (current) draw(current);
+});
+$("showEvents").addEventListener("change", () => current && draw(current));
+
+// --- boot ---
+fetch("data.json", { cache: "no-store" })
+  .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+  .then((doc) => {
+    DATA = doc;
+    doc.columns.forEach((c, i) => { COL[c] = i; });
+    renderRail();
+    renderWarnings();
+    $("foot").textContent = `Generated ${etShort(Math.floor(Date.parse(doc.generated_at) / 1000))} ET · ${doc.timeframe} bars · ${doc.days} trading days · RSI ${doc.settings.rsi_period} · ATR ${doc.settings.atr_period} · MACD ${doc.settings.macd.join("/")} · events: |gap| or |body| > ${doc.settings.atr_event_mult}×ATR, MACD flip with |hist| ≥ ${doc.settings.macd_min_hist_atr}×ATR`;
+    const fromHash = (location.hash.match(/sym=([A-Z.]+)/) || [])[1];
+    const symbols = Object.keys(doc.symbols);
+    const first = symbols.find((s) => doc.symbols[s].spreads.length) || symbols[0];
+    select(symbols.includes(fromHash) ? fromHash : first);
+  })
+  .catch((e) => {
+    $("err").style.display = "block";
+    $("err").textContent = `Could not load data.json (${e.message}). Run surge_artifacts/paca-candles/deploy.sh to export and redeploy.`;
+  });
+
+window.addEventListener("hashchange", () => {
+  const s = (location.hash.match(/sym=([A-Z.]+)/) || [])[1];
+  if (s && DATA && DATA.symbols[s] && s !== current) select(s);
+});
+window.addEventListener("resize", () => { if (current && $("chart").data) Plotly.Plots.resize($("chart")); });
+
+function select(symbol) {
+  current = symbol;
+  if (location.hash !== "#sym=" + symbol) history.replaceState(null, "", "#sym=" + symbol);
+  document.querySelectorAll("nav.rail button.sym").forEach((b) => b.classList.toggle("active", b.dataset.sym === symbol));
+  renderStrip(symbol);
+  renderTable(symbol);
+  draw(symbol);
+}
+
+// --- rail ---
+function renderRail() {
+  const rail = $("rail");
+  for (const [sym, block] of Object.entries(DATA.symbols)) {
+    const closed = block.spreads.filter((s) => s.status === "closed" && s.pnl != null);
+    const pnl = closed.reduce((a, s) => a + s.pnl, 0);
+    const open = block.spreads.some((s) => s.status === "open");
+    const b = document.createElement("button");
+    b.className = "sym"; b.type = "button"; b.dataset.sym = sym;
+    b.innerHTML = `<span class="name">${esc(sym)}</span><span class="meta">${open ? '<span class="dot" title="open position"></span>' : ""}${block.spreads.length ? `<span class="chip mono ${closed.length ? (pnl >= 0 ? "pos" : "neg") : ""}">${block.spreads.length}× ${closed.length ? fmtUsd(pnl) : ""}</span>` : ""}</span>`;
+    b.addEventListener("click", () => select(sym));
+    rail.appendChild(b);
+  }
+}
+
+// --- header strip ---
+function renderStrip(symbol) {
+  const block = DATA.symbols[symbol];
+  const bars = block.bars;
+  const last = bars[bars.length - 1];
+  const stat = (k, v, cls = "") => `<div class="stat"><span class="k">${k}</span><span class="v mono ${cls}">${v}</span></div>`;
+  if (!last) { $("strip").innerHTML = `<span class="sym">${esc(symbol)}</span><span class="stat"><span class="v">no bars exported</span></span>`; return; }
+  const c = (name) => last[COL[name]];
+  const trend = c("ema11") != null && c("ema22") != null ? (c("ema11") > c("ema22") ? "11 > 22" : "11 < 22") : "—";
+  const hist = c("macd_hist");
+  const closed = block.spreads.filter((s) => s.status === "closed" && s.pnl != null);
+  const pnl = closed.length ? closed.reduce((a, s) => a + s.pnl, 0) : null;
+  $("strip").innerHTML =
+    `<span class="sym">${esc(symbol)}</span>` +
+    stat("last close", fmtNum(c("close"))) +
+    stat("last bar", etShort(last[COL.t]) + " ET") +
+    stat("RSI", fmtNum(c("rsi"), 1), c("rsi") >= DATA.settings.rsi_overbought ? "down" : c("rsi") <= DATA.settings.rsi_oversold ? "up" : "") +
+    stat("ATR", fmtNum(c("atr"), 3)) +
+    stat("MACD hist", (hist == null ? "—" : (hist >= 0 ? "+" : "−") + Math.abs(hist).toFixed(3)), hist > 0 ? "up" : hist < 0 ? "down" : "") +
+    stat("EMA", trend, trend.includes(">") ? "up" : trend.includes("<") ? "down" : "") +
+    stat("spreads", `${block.spreads.length} (${block.spreads.filter((s) => s.status === "open").length} open)`) +
+    stat("realized", fmtUsd(pnl), pnl == null ? "" : pnl >= 0 ? "up" : "down") +
+    stat("bars", `${bars.length}`);
+}
+
+// --- table ---
+function renderTable(symbol) {
+  const rows = DATA.symbols[symbol].spreads;
+  if (!rows.length) { $("spreads").innerHTML = `<tr><td class="l" style="color:var(--muted)">No spreads on ${esc(symbol)} in the export window.</td></tr>`; return; }
+  const head = `<tr><th class="l">entered (ET)</th><th class="l">exited (ET)</th><th class="l">type</th><th>long</th><th>short</th><th class="l">expiry</th><th>qty</th><th>debit</th><th>credit</th><th>P&amp;L</th><th>%</th><th>hold</th><th class="l">reason</th><th class="l">trigger</th><th class="l">thesis</th></tr>`;
+  const body = rows.map((s) => {
+    const hold = s.entered_at && s.exited_at ? Math.round((s.exited_at - s.entered_at) / 60) + "m" : "—";
+    const pnlCls = s.pnl == null ? "" : s.pnl >= 0 ? "pos" : "neg";
+    return `<tr>
+      <td class="l mono">${etShort(s.entered_at)}</td>
+      <td class="l mono">${s.status === "open" ? '<span class="pill open">open</span>' : etShort(s.exited_at)}</td>
+      <td class="l"><span class="pill ${esc(s.type)}">${esc(s.direction)}</span></td>
+      <td class="mono">${fmtNum(s.long_strike)}</td><td class="mono">${fmtNum(s.short_strike)}</td>
+      <td class="l mono">${esc(s.expiration)}</td><td class="mono">${s.qty}</td>
+      <td class="mono">${fmtNum(s.entry_debit)}</td><td class="mono">${fmtNum(s.exit_credit)}</td>
+      <td class="mono ${pnlCls}">${fmtUsd(s.pnl)}</td><td class="mono ${pnlCls}">${fmtPct(s.pnl_pct)}</td>
+      <td class="mono">${hold}</td>
+      <td class="l">${s.exit_reason ? `<span class="pill">${esc(s.exit_reason)}</span>` : "—"}</td>
+      <td class="l mono">${(s.events_at_entry || []).map(esc).join(", ") || "—"}</td>
+      <td class="thesis">${esc(s.thesis || "—")}</td>
+    </tr>`;
+  }).join("");
+  $("spreads").innerHTML = head + body;
+}
+
+function renderWarnings() {
+  const w = DATA.warnings || [];
+  $("warnings").innerHTML = w.length ? `<strong>Export warnings</strong><ul>${w.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
+}
+
+// --- chart ---
+function nearestBarIndex(bars, epoch) {
+  // Last bar that started at or before `epoch` (the fill lands inside that bar).
+  let lo = 0, hi = bars.length - 1, best = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (bars[mid][COL.t] <= epoch) { best = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return best;
+}
+
+function draw(symbol) {
+  const el = $("chart");
+  const block = DATA.symbols[symbol];
+  const bars = block.bars;
+  // Plotly.react cannot recover if the container's DOM was cleared, so every
+  // redraw (symbol switch, theme, toggles) purges and builds a fresh plot.
+  Plotly.purge(el);
+  el.innerHTML = "";
+  if (!bars.length) { el.innerHTML = `<div class="empty">No bars exported for ${esc(symbol)}.</div>`; return; }
+
+  const T = {
+    ink: cssVar("--ink"), ink2: cssVar("--ink-2"), muted: cssVar("--muted"), grid: cssVar("--grid"),
+    surface: cssVar("--surface"), accent: cssVar("--accent"), good: cssVar("--good"), bad: cssVar("--critical"),
+    pos: cssVar("--div-pos"), neg: cssVar("--div-neg"), emaSlow: cssVar("--ema-slow"), warn: cssVar("--warning"),
+  };
+  const x = bars.map((b) => etString(b[COL.t]));
+  const col = (name) => bars.map((b) => b[COL[name]]);
+  const close = col("close"), low = col("low"), atr = col("atr"), hist = col("macd_hist");
+
+  const traces = [
+    { type: "candlestick", name: symbol, x, open: col("open"), high: col("high"), low, close,
+      increasing: { line: { color: T.good, width: 1 }, fillcolor: T.good }, decreasing: { line: { color: T.bad, width: 1 }, fillcolor: T.bad },
+      whiskerwidth: 0.4, yaxis: "y", showlegend: false },
+    { type: "scatter", mode: "lines", name: "EMA 11", x, y: col("ema11"), line: { color: T.accent, width: 1.3 }, yaxis: "y", hoverinfo: "skip", showlegend: false },
+    { type: "scatter", mode: "lines", name: "EMA 22", x, y: col("ema22"), line: { color: T.emaSlow, width: 1.3 }, yaxis: "y", hoverinfo: "skip", showlegend: false },
+    // RSI
+    { type: "scatter", mode: "lines", name: "RSI", x, y: col("rsi"), line: { color: T.accent, width: 1.2 }, yaxis: "y2", hovertemplate: "RSI %{y:.1f}<extra></extra>", showlegend: false },
+    // MACD
+    { type: "bar", name: "hist", x, y: hist, marker: { color: hist.map((h) => h >= 0 ? rgba(T.pos, 0.55) : rgba(T.neg, 0.55)) }, yaxis: "y3", hovertemplate: "hist %{y:.3f}<extra></extra>", showlegend: false },
+    { type: "scatter", mode: "lines", name: "MACD", x, y: col("macd"), line: { color: T.ink2, width: 1.1 }, yaxis: "y3", hovertemplate: "MACD %{y:.3f}<extra></extra>", showlegend: false },
+    { type: "scatter", mode: "lines", name: "signal", x, y: col("macd_signal"), line: { color: T.emaSlow, width: 1.1 }, yaxis: "y3", hovertemplate: "signal %{y:.3f}<extra></extra>", showlegend: false },
+    // ATR
+    { type: "scatter", mode: "lines", name: "ATR", x, y: atr, line: { color: T.ink2, width: 1.2 }, fill: "tozeroy", fillcolor: rgba(T.accent, 0.08), yaxis: "y4", hovertemplate: "ATR %{y:.3f}<extra></extra>", showlegend: false },
+  ];
+
+  // Event markers: one trace per kind so the legend can toggle them.
+  if ($("showEvents").checked) {
+    const style = {
+      gap_up: ["diamond", T.good], gap_down: ["diamond", T.bad],
+      breakout_up: ["square", T.good], breakout_down: ["square", T.bad],
+      macd_cross_up: ["circle", T.good], macd_cross_down: ["circle", T.bad],
+    };
+    const byKind = {};
+    for (const [t, kinds] of block.events) {
+      const i = nearestBarIndex(bars, t);
+      for (const k of kinds) (byKind[k] = byKind[k] || []).push({ i, all: kinds });
+    }
+    for (const [kind, pts] of Object.entries(byKind)) {
+      const [symbolShape, color] = style[kind] || ["circle", T.muted];
+      const onMacd = kind.startsWith("macd");
+      traces.push({
+        type: "scatter", mode: "markers", name: kind, legendgroup: "events",
+        x: pts.map((p) => x[p.i]),
+        y: pts.map((p) => onMacd ? 0 : low[p.i] - 0.6 * (atr[p.i] || 0)),
+        yaxis: onMacd ? "y3" : "y",
+        marker: { symbol: symbolShape, size: 7, color, line: { width: 0.5, color: T.surface } },
+        customdata: pts.map((p) => p.all.join(", ")),
+        hovertemplate: "%{x}<br>event: %{customdata}<extra></extra>",
+        showlegend: false,
+      });
+    }
+  }
+
+  // Spreads: strike bands, entry/exit markers, connector.
+  const shapes = [], annotations = [];
+  const entries = { x: [], y: [], sym: [], color: [], text: [] };
+  const exits = { x: [], y: [], color: [], text: [] };
+  const connX = [], connY = [];
+  const anchorsX = [], anchorsY = [];
+  const lastX = x[x.length - 1];
+  for (const s of block.spreads) {
+    if (s.entered_at == null) continue;
+    const iIn = nearestBarIndex(bars, s.entered_at);
+    const iOut = s.exited_at != null ? nearestBarIndex(bars, s.exited_at) : null;
+    const tint = s.type === "P" ? T.neg : T.pos;
+    const x0 = x[iIn], x1 = iOut != null ? x[iOut] : lastX;
+    if (s.long_strike != null && s.short_strike != null) {
+      const y0 = Math.min(s.long_strike, s.short_strike), y1 = Math.max(s.long_strike, s.short_strike);
+      shapes.push({ type: "rect", xref: "x", yref: "y", x0, x1, y0, y1, fillcolor: rgba(tint, 0.14),
+        line: { color: rgba(tint, 0.7), width: 1, dash: s.status === "open" ? "dot" : "solid" }, layer: "below" });
+      anchorsX.push(x0, x1); anchorsY.push(y0, y1);
+    }
+    const legs = `${fmtNum(s.long_strike)} / ${fmtNum(s.short_strike)} ${s.type === "P" ? "put" : "call"} · exp ${s.expiration}`;
+    entries.x.push(x0); entries.y.push(close[iIn]); entries.sym.push(s.type === "P" ? "triangle-down" : "triangle-up"); entries.color.push(tint);
+    entries.text.push(`<b>ENTER ${esc(s.direction)}</b> ×${s.qty} @ ${fmtNum(s.entry_debit)} debit<br>${legs}<br>trigger: ${(s.events_at_entry || []).join(", ") || "—"}<br>${esc(s.thesis || "")}${s.cycle_id ? `<br><span style="color:${T.muted}">cycle ${s.cycle_id}</span>` : ""}`);
+    if (iOut != null) {
+      const hold = Math.round((s.exited_at - s.entered_at) / 60);
+      exits.x.push(x1); exits.y.push(close[iOut]); exits.color.push(s.pnl == null ? T.muted : s.pnl >= 0 ? T.good : T.bad);
+      exits.text.push(`<b>EXIT · ${esc(s.exit_reason || "?")}</b> ×${s.qty} @ ${fmtNum(s.exit_credit)} credit<br>${legs}<br>P&L ${fmtUsd(s.pnl)} (${fmtPct(s.pnl_pct)}) · held ${hold}m`);
+      connX.push(x0, x1, null); connY.push(close[iIn], close[iOut], null);
+    }
+  }
+  if (anchorsX.length) traces.push({ type: "scatter", mode: "markers", x: anchorsX, y: anchorsY, marker: { opacity: 0, size: 1 }, yaxis: "y", hoverinfo: "skip", showlegend: false });
+  if (connX.length) traces.push({ type: "scatter", mode: "lines", x: connX, y: connY, line: { color: T.ink2, width: 1, dash: "dash" }, yaxis: "y", hoverinfo: "skip", showlegend: false, connectgaps: false });
+  if (entries.x.length) traces.push({ type: "scatter", mode: "markers", name: "entry", x: entries.x, y: entries.y, yaxis: "y",
+    marker: { symbol: entries.sym, size: 15, color: entries.color, line: { width: 1.5, color: T.ink } }, text: entries.text, hovertemplate: "%{x}<br>%{text}<extra></extra>", showlegend: false });
+  if (exits.x.length) traces.push({ type: "scatter", mode: "markers", name: "exit", x: exits.x, y: exits.y, yaxis: "y",
+    marker: { symbol: "x", size: 13, color: exits.color, line: { width: 1.5, color: T.ink } }, text: exits.text, hovertemplate: "%{x}<br>%{text}<extra></extra>", showlegend: false });
+
+  // Reference lines: RSI 30/70, MACD zero.
+  const hline = (y, yref, color, dash = "dot") => ({ type: "line", xref: "paper", x0: 0, x1: 1, yref, y0: y, y1: y, line: { color, width: 1, dash } });
+  shapes.push(hline(DATA.settings.rsi_overbought, "y2", T.bad), hline(DATA.settings.rsi_oversold, "y2", T.good), hline(50, "y2", T.grid, "solid"), hline(0, "y3", T.grid, "solid"));
+
+  // View: the last `viewDays` trading days (ET dates); 0 = autorange over everything.
+  const days = [...new Set(x.map((s) => s.slice(0, 10)))];
+  let range;
+  if (viewDays > 0) {
+    const startDay = days[Math.max(0, days.length - viewDays)];
+    range = [x[x.findIndex((s) => s.startsWith(startDay))], x[x.length - 1]];
+  }
+
+  const rangebreaks = [{ bounds: ["sat", "mon"] }];
+  if ($("rthOnly").checked) rangebreaks.push({ bounds: [16, 9.5], pattern: "hour" });
+
+  const axis = (domain, title, extra = {}) => ({
+    domain, title: { text: title, font: { size: 11, color: T.muted }, standoff: 6 }, gridcolor: T.grid, zeroline: false,
+    tickfont: { size: 10, color: T.muted, family: "IBM Plex Mono, Menlo, monospace" }, fixedrange: false, ...extra,
+  });
+  const layout = {
+    paper_bgcolor: T.surface, plot_bgcolor: T.surface, font: { color: T.ink, family: "system-ui, -apple-system, sans-serif", size: 12 },
+    margin: { l: 12, r: 64, t: 8, b: 34 }, hovermode: "closest", dragmode: "pan", bargap: 0.2, showlegend: false,
+    hoverlabel: { bgcolor: T.surface, bordercolor: T.grid, font: { color: T.ink, size: 12, family: "IBM Plex Mono, Menlo, monospace" } },
+    xaxis: { type: "date", anchor: "y4", range, autorange: !range, rangebreaks, rangeslider: { visible: false }, gridcolor: T.grid, showspikes: true, spikemode: "across", spikesnap: "cursor", spikethickness: 1, spikedash: "dot", spikecolor: T.muted,
+             tickfont: { size: 10, color: T.muted, family: "IBM Plex Mono, Menlo, monospace" }, tickformat: "%b %d\n%H:%M", hoverformat: "%a %b %d %H:%M ET" },
+    yaxis:  axis([0.43, 1.0], symbol, { side: "right", tickformat: ".2f" }),
+    yaxis2: axis([0.29, 0.41], "RSI", { side: "right", range: [0, 100], tickvals: [30, 50, 70] }),
+    yaxis3: axis([0.15, 0.27], "MACD", { side: "right" }),
+    yaxis4: axis([0.0, 0.12], "ATR", { side: "right", rangemode: "tozero" }),
+    shapes, annotations,
+  };
+  Plotly.newPlot(el, traces, layout, { responsive: true, displaylogo: false, scrollZoom: true,
+    modeBarButtonsToRemove: ["select2d", "lasso2d", "autoScale2d", "toggleSpikelines"] });
+}
+</script>
+</body>
+</html>

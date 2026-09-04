@@ -48,6 +48,8 @@ class LegPosition:
     strike: float
     qty: int  # signed: positive = long, negative = short
     avg_entry_price: float | None  # per share
+    unrealized_pl: float | None = None  # dollars, Alpaca's own mark (pnl.py)
+    current_price: float | None = None  # per share, Alpaca's own mark (pnl.py)
 
 
 @dataclass(frozen=True)
@@ -75,6 +77,9 @@ class SymbolFeatures:
     events: tuple[Event, ...]
     bar_age_seconds: float | None
     gate_block: str | None = None  # None = tradeable candidate
+    ema_fast_dist: float | None = None  # close − fast trend EMA ($): advisory, never a gate
+    ema_slow_dist: float | None = None  # close − slow trend EMA ($): advisory, never a gate
+    held: str | None = None  # "CALL"/"PUT" when a spread is already held: a new entry is an add
 
 
 @dataclass(frozen=True)
@@ -159,6 +164,28 @@ class OrderReceipt:
     order_id: str | None = None
     status: str | None = None
     error: str | None = None  # exception type name only, never message text
+
+
+@dataclass(frozen=True)
+class SpreadFill:
+    """One filled two-leg MLEG order, as read back from Alpaca (pnl.py)."""
+
+    client_order_id: str
+    filled_at: datetime
+    intent: str  # "enter" (legs *_to_open) | "exit" (legs *_to_close)
+    long_symbol: str  # the leg bought to open / sold to close
+    short_symbol: str
+    qty: int
+    net_price: float  # per share: +buy legs −sell legs → entry = +debit, exit = −credit
+
+
+def journal_entries(record: dict) -> list[dict]:
+    """Entry attempts of one journal row. Rows written before 2026-09-02 carry a
+    single `entry` (dict or None); newer rows carry an `entries` list."""
+    if record.get("entries") is not None:
+        return list(record["entries"])
+    entry = record.get("entry")
+    return [entry] if entry else []
 
 
 def to_json_line(obj: object) -> str:

@@ -6,7 +6,7 @@
 # the program with a message naming the exact key. Edit, save, restart.
 # ============================================================================
 
-symbols: [SPY, QQQ, IWM, AAPL, NVDA, TSLA, MSFT, AMZN]   # candidate underlyings scanned every cycle
+symbols: [SPY, QQQ, IWM, AAPL, NVDA, TSLA, MSFT, AMZN, IBIT, MSTR, SLV, WMT, GLD, USO, XLE]   # candidate underlyings scanned every cycle
 bar_timeframe: 5m           # bar duration for signals: 5m / 15m / 1h / 1d / 1w
 loop_interval_seconds: 300   # seconds between cycles with `run --loop` (900 = 15 min)
 
@@ -17,9 +17,11 @@ signals:                     # technical analysis + entry events
   macd_slow: 26              # slow EMA length
   macd_signal: 9             # EMA length of the MACD signal line
   atr_event_mult: 2.0        # gap/breakout events fire only above this many ATRs (higher = rarer, stronger)
-  macd_min_atr_mult: 0.05    # MACD cross events fire only when |histogram| >= this fraction of ATR (chop filter)
-  rsi_call_max: 70.0         # CALL events are hard-blocked at RSI >= this (overbought exhaustion gate)
-  rsi_put_min: 30.0          # PUT events are hard-blocked at RSI <= this (oversold exhaustion gate)
+  macd_min_hist_atr: 0.05    # MACD cross fires only when |histogram| >= this many ATRs (0 = any sign flip)
+  rsi_overbought: 70         # entries only: drop CALL events at/above this RSI (exhausted up-move)
+  rsi_oversold: 30           # entries only: drop PUT events at/below this RSI (exhausted down-move)
+  trend_ema_fast: 25         # advisory trend anchor, bars (~2h on 5m): journaled + shown to the decider, NOT a gate
+  trend_ema_slow: 50         # advisory trend anchor, bars (~4h on 5m): journaled + shown to the decider, NOT a gate
   stale_bar_factor: 2.0      # block entries when the last bar is older than this many bar durations
   min_bars: 40               # completed bars required before indicators count (>= macd_slow + macd_signal)
 
@@ -27,24 +29,28 @@ screener:                    # which vertical spreads are even considered
   min_dte: 5                 # nearest expiry must be at least this many days out
   max_expiry_lookahead_days: 45   # ignore expirations further out than this many days
   expiries_to_screen: 3      # screen the nearest N eligible expiries and rank spreads across them
+  min_liquid_legs_per_expiry: 3   # skip an expiry unless this many strikes within max_width_pct of spot have OI >= min_open_interest (drops the empty Mon/Tue/Wed dailies on GLD/USO/XLE)
   strike_band_pct: 0.10      # candidate strikes within +/- this fraction of spot (0.10 = 10%)
   otm_only: true             # out-of-the-money strikes plus the one at-the-money strike bracketing spot
-  min_width_pct: 0.02        # spread width at least this fraction of spot (0.03 = 3%)
+  min_width_pct: 0.01        # spread width at least this fraction of spot (0.02 = $15 floor on SPY starved it of combos)
   max_width_pct: 0.05        # spread width at most this fraction of spot (wider = more risk per spread)
   min_open_interest: 100     # per-leg liquidity floor, in contracts
   max_quote_age_seconds: 10.0     # reject quotes older than this vs Alpaca's server clock
   max_leg_spread_bps: 350.0  # reject legs whose bid-ask spread exceeds this (350 = 3.5% of mid)
   min_net_debit: 0.05        # ignore junk spreads cheaper than this ($ per share)
+  min_debit_frac: 0.25       # debit at least this fraction of width: keeps the long leg near ATM (real delta)
+  max_debit_frac: 0.45       # debit at most this fraction of width: keeps reward-to-risk >= ~1.2
 
 risk:                        # position sizing — all fractions of LIVE account equity
   per_entry_fraction: 0.005  # one entry's total debit <= this fraction (0.005 = $500 on $100k)
   per_underlying_fraction: 0.015   # open premium at risk on ONE underlying <= this fraction (0.02 = $2k on $100k)
-  per_cycle_fraction: 0.01   # new premium per cycle <= this fraction of equity
+  per_cycle_fraction: 0.01   # new premium per cycle <= this fraction of equity; also caps a cycle at floor(per_cycle / per_entry) entries (0.01/0.005 = 2)
   total_fraction: 0.10       # total open premium at risk <= this fraction of equity
+  allow_stacking: true       # allow a further SAME-direction entry on an underlying already held (sized by per_underlying_fraction); false = one spread per underlying
 
 exits:                       # mechanical, checked every cycle — the LLM is never consulted
   stop_fraction: 0.5         # stop-loss: exit when net mark <= this fraction of entry debit (0.5 = -50%)
-  take_profit_mult: 2.0      # take-profit: exit when net mark >= this multiple of entry debit (2.0 = +100%)
+  take_profit_mult: 3.0      # take-profit: exit when net mark >= this multiple of entry debit (2.0 = +100%)
   exit_dte: 2                # always exit at this many days to expiration or fewer
   reversal_exit: true        # close a spread when an entry event fires AGAINST it (e.g. gap_down while holding a call spread)
 

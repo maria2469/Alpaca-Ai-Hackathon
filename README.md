@@ -1,6 +1,17 @@
 # PACA — Position-Aware Agentic Capital Allocator
 
-An autonomous, institutional-grade multi-agent options trading system built for the **Alpaca AI Trading Agents Hackathon**. PACA trades **debit vertical spreads** using parallel real-time market scanning, 2-round dialectical specialist debate (Bull vs. Bear vs. Options), dynamic risk-decision negotiation, closed-loop memory calibration, and active position management.
+An autonomous, institutional-grade multi-agent options trading system built for the [**Alpaca AI Trading Agents Hackathon**](https://lablab.ai/ai-hackathons/alpaca-ai-trading-agents-hackathon) (Aug 28 – Sep 4, 2026, submissions due Sep 4 15:00 UTC). PACA trades **debit vertical spreads** using parallel real-time market scanning, 2-round dialectical specialist debate (Bull vs. Bear vs. Options), dynamic risk-decision negotiation, closed-loop memory calibration, and active position management.
+
+> [!TIP]
+> **Live dashboards**, refreshed on every [`/paca-agent` run](#running-the-paca-agent):
+> - [alpaca-hackathon-2026-artifacts-paca-cycles.surge.sh](https://alpaca-hackathon-2026-artifacts-paca-cycles.surge.sh)
+>   — cycle journal, open positions with unrealized PnL, realized PnL per
+>   closed spread, and trading config.
+> - [alpaca-hackathon-2026-artifacts-paca-candles.surge.sh](https://alpaca-hackathon-2026-artifacts-paca-candles.surge.sh)
+>   — every spread's entry and exit drawn over 5m candles with the RSI/ATR/MACD
+>   signals, EMA 11/22, and the bars where entry events fired.
+>
+> How both pages are exported and deployed: [docs/DASHBOARDS.md](docs/DASHBOARDS.md).
 
 ---
 
@@ -54,7 +65,7 @@ flowchart TD
     subgraph S6["6. REAL-TIME POSITION MANAGER"]
         PM_PNL["Real-Time Mark-to-Market PnL Tracking"]
         PM_DTE["Time Stop (DTE ≤ 2 days Expiry Exit)"]
-        PM_TP["Profit Target (Net Mark ≥ 2.0x Debit)"]
+        PM_TP["Profit Target (Net Mark ≥ 3.0x Debit)"]
         PM_STOP["Stop-Loss Protection (Net Mark ≤ 0.5x Debit)"]
         PM_REV["Thesis Invalidation (Opposing Events Reversal)"]
         PM_PNL --> PM_DTE & PM_TP & PM_STOP & PM_REV
@@ -78,6 +89,22 @@ flowchart TD
     S7 -.->|Feedback Loop 1: Lesson & Mistake Injection| S3
     S7 -.->|Feedback Loop 3: Calibration Weights| S2
 ```
+
+---
+
+### Core Module Breakdown
+
+| Diagram box | Module | Job |
+|---|---|---|
+| Entry signal (market data) | `market_data.py` | OHLCV DataFrame for one symbol at a time, any bar timeframe |
+| Entry signal (analysis) | `signals.py` | RSI/ATR/MACD + event detection (gap, breakout, MACD cross) + entry gates (pure) |
+| Entry signal (decision) | `decision_layer.py` | LLM (Gemini with OpenAI fallback) — or `--manual-mode` — picks entries one at a time |
+| Option screener | `options_screener.py` | expiry pick, spread enumeration, liquidity filter, reward-to-risk ranking, order plans (pure) |
+| Risk manager + Position manager | `pos_and_risk.py` | leg pairing, mechanical exits, equity-relative sizing (pure) |
+| Execution + Account state | `broker.py` | all env/Alpaca access; `submit_paper_order` is the only submitting function |
+| wiring | `cli.py` & `multi_agent_cli.py` | typer CLI + cycle engine + loguru logging + JSONL journal |
+| — | `settings.yaml` + `settings.py` | every trader-tunable value in one validated file |
+| — | `data_models.py` | frozen dataclasses shared by everything |
 
 ---
 
@@ -127,7 +154,7 @@ PACA implements 3 persistent memory layers and 3 active feedback loops to contin
 ## ⚡ The 7-Step Autonomous Pipeline
 
 ### Step 1: Fast Opportunity Scanner Agent
-* Collects 50 completed 5-minute bars across 8 whitelisted underlyings (`SPY`, `QQQ`, `IWM`, `AAPL`, `NVDA`, `TSLA`, `MSFT`, `AMZN`) simultaneously.
+* Collects 50 completed 5-minute bars across whitelisted underlyings (`SPY`, `QQQ`, `IWM`, `AAPL`, `NVDA`, `TSLA`, `MSFT`, `AMZN`, etc.) simultaneously.
 * Computes `RSI(14)`, `ATR(14)`, `MACD(12/26/9)`, Black-Scholes Greeks ($\Delta, \Gamma, \Theta, \text{Vega}$), and Implied Volatility (IV).
 * Identifies event triggers: `gap_up`, `gap_down`, `breakout_up`, `breakout_down`, `macd_cross_up`, `macd_cross_down`.
 * Pre-fetches Alpaca account state concurrently, eliminating downstream network latency.
@@ -144,7 +171,7 @@ PACA implements 3 persistent memory layers and 3 active feedback loops to contin
 * **Critic Arbiter**: Synthesizes the debate, resolves conflicts, queries Gemini LLM, and updates `working_scratchpad`.
 
 ### Step 4: Portfolio Risk Gate & EV Optimizer
-* Screens vertical debit spreads across the 3 nearest expiries ($\ge 5\text{ DTE}$) with widths between $2\%$ and $5\%$ of spot.
+* Screens vertical debit spreads across the 3 nearest expiries ($\ge 5\text{ DTE}$) with widths between $1\%$ and $5\%$ of spot.
 * Calculates Expected Value: $\text{EV} = (P_{\text{win}} \times \text{Max Profit}) - (P_{\text{loss}} \times \text{Max Loss})$.
 * Enforces **4-Tier Fractional Risk Caps**:
   * Per entry $\le 0.5\%$ of equity.
@@ -162,38 +189,25 @@ PACA implements 3 persistent memory layers and 3 active feedback loops to contin
 * Manages order lifecycles and provides audio notifications on fill.
 
 ### Step 6: Real-Time Position Manager Agent
-* Tracks real-time Mark-to-Market PnL and Greek sensitivities.
-* Evaluates strict mechanical exit precedence:
-  1. **Time Stop**: $\text{DTE} \le 2\text{ days}$ (prevents pin/gamma risk).
-  2. **Thesis Invalidation / Reversal**: Opposing event fired against spread direction.
-  3. **Profit Target**: Net mark $\ge 2.0\times$ entry debit ($+100\%$).
-  4. **Stop-Loss**: Net mark $\le 0.5\times$ entry debit ($-50\%$).
-  5. **Momentum Breakdown**: Severe RSI divergence ($< 28$) with bearish MACD.
-* Constructs and routes closing MLEG order plans automatically.
+* Evaluates mark-to-market valuations on all open spreads.
+* Applies mechanical exit triggers:
+  * **Profit Target**: Net mark $\ge 3.0\times$ entry debit (+200% gain).
+  * **Stop-Loss**: Net mark $\le 0.5\times$ entry debit (-50% loss).
+  * **Time Stop**: DTE $\le 2$ days to expiration.
+  * **Reversal Exit**: Close a spread when an opposing event fires against it.
 
 ### Step 7: Trade Memory & Analytics Agent
-* Traces full trade lifecycles: `Prediction → Decision → Execution → Outcome`.
-* Appends structured JSON records to `logs/trade_memory.jsonl`.
-* Computes live calibration metrics: Win Rate, Profit Factor, Average PnL, Regime attribution.
-* Autonomous Post-Mortem Reflection: Calls Google Gemini on trade exits to extract lessons for continuous prompt injection.
+* Appends full execution traces to `logs/trade_memory.jsonl` and `logs/cycles.jsonl`.
+* Autonomous Gemini post-mortem review of closed trades.
+* Computes event-level win rates and extracts lessons for future cycles.
 
 ---
 
-## 🛠️ Step-by-Step User Guide
+## 🚀 Getting Started
 
-### 1. Installation & Setup
-Requires **Python 3.11** and [uv](https://docs.astral.sh/uv/).
+### 1. Environment Configuration
+Copy `.env.example` to `.env` and fill in your keys:
 
-```bash
-# Clone repository
-git clone https://github.com/maria2469/Alpaca-Ai-Hackathon.git
-cd Alpaca-Ai-Hackathon
-
-# Install all dependencies with uv
-uv sync
-```
-
-Your `.env` file must contain your **Alpaca Paper Trading Keys** and **Gemini API Key**:
 ```ini
 ALPACA_API_KEY=your_alpaca_paper_key
 ALPACA_SECRET_KEY=your_alpaca_paper_secret
@@ -202,84 +216,56 @@ GEMINI_API_KEY=your_gemini_api_key
 ```
 
 ### 2. Verify System & Run Pytest Suite
-Run the offline unit test suite (210 tests, 0 network calls, 100% mocked):
+Run the offline unit test suite:
 
 ```bash
-uv run pytest
+uv run pytest                                   # no credentials, no network
 ```
 
-### 3. Preflight & Diagnostics
-Verify configuration, API keys, and Alpaca connectivity:
+### 3. Diagnostics & Preflight Checks
 
 ```bash
-# Complete preflight check
-uv run --env-file .env python -m cli preflight
+uv run --env-file .env cli.py preflight                        # settings + credentials + connectivity check
+uv run --env-file .env cli.py account                          # account state (read-only)
+uv run --env-file .env cli.py candidates                       # scored whitelist (read-only)
+uv run --env-file .env cli.py screen SPY --direction CALL      # what spread would be picked
 
-# View paper account equity, options trading level, and open positions
-uv run --env-file .env python -m cli account
-
-# View live technical indicators and fired signals across all whitelisted symbols
-uv run --env-file .env python -m cli candidates
-
-# Screen option spreads for a specific underlying
-uv run --env-file .env python -m cli screen SPY --direction CALL
+uv run --env-file .env pnl.py positions [--json]               # open PnL per spread (Alpaca's marks)
+uv run --env-file .env pnl.py realized [--json] [--days 30]    # PnL per closed spread, from filled orders
 ```
 
 ### 4. Running Trading Cycles
 
 #### Dry-Run Mode (Safe Simulation)
-Evaluates market data, regime, specialist debate, risk sizing, and constructs the order plan **without submitting to Alpaca**:
-
 ```bash
-uv run --env-file .env python -m cli run --dry-run
+uv run --env-file .env cli.py run --manual-mode                # one cycle, dry run, you pick the entry
+uv run --env-file .env multi_agent_cli.py run --dry-run        # one cycle, dry run with 7-agent pipeline
 ```
 
 #### Single Live Paper Execution
-Executes one full cycle and submits approved MLEG spread orders to your Alpaca Paper Account:
-
 ```bash
-uv run --env-file .env python -m cli run --execute
+uv run --env-file .env cli.py run --manual-mode --execute      # one cycle, real PAPER order
+uv run --env-file .env multi_agent_cli.py run --execute        # one cycle, 7 agents live paper execution
 ```
 
 #### Autonomous Continuous Loop
-Runs the autonomous multi-agent pipeline continuously on every bar interval (default: 5 minutes = 300s):
-
 ```bash
-uv run --env-file .env python -m cli run --execute --loop
+uv run --env-file .env cli.py run --execute --loop             # autonomous loop every 5 min
+uv run --env-file .env multi_agent_cli.py run --execute --loop # autonomous multi-agent pipeline loop
 ```
 
-### 5. Inspecting Trade Memory & Audits
-Every cycle appends full structured traces to the audit logs:
+### Running the `/paca-agent`
+
+The project ships a Claude Code skill (`.claude/skills/paca-agent/`) that runs one full cycle with Claude as the momentum-trader entry decider:
 
 ```bash
-# View latest trade memory lifecycle record
-tail -n 1 logs/trade_memory.jsonl
-
-# View cycle journal
-tail -n 1 logs/cycles.jsonl
+/paca-agent
 ```
 
----
+To run repeatedly until market close:
 
-## ⏱️ Performance & Speed Profile
-
-Benchmarked live against the Alpaca Paper API:
-
-```text
-================================================================================
-7-STEP COMPLETE AUTONOMOUS PIPELINE SPEED BREAKDOWN
-================================================================================
-   1. Market Scanner Agent             : 2.188s (Parallel Alpaca OHLCV + Account Pre-fetch)
-   2. Regime Agent                     : 0.0004s (Deterministic classification)
-   3. Decision Agent (Debate + Critic) : 0.0008s (2-Round Dialectical Cross-Examination)
-   4. Portfolio Risk Gate & EV         : 0.0000s (4-Tier Risk Sizing & Parallel Snapshots)
-   5. Execution Agent                  : 0.0002s (Limit Pegging & Plan Formatting)
-   6. Real-Time Position Manager       : 0.0002s (Mark-to-Market & Exit Rules)
-   7. Trade Memory & Analytics         : 0.0003s (Lifecycle Tracing & Calibration)
-   -----------------------------------------------------------------------------
-   Total 7-Step Autonomous Cycle Time  : 2.188s (~27.4 cycles / minute)
-   Pure Deterministic Compute          : < 0.005s
-================================================================================
+```
+/loop 5m /paca-agent — before starting each cycle check the current time; if it is 4:01pm ET or later, or the market is closed, do NOT run the cycle: stop the loop immediately
 ```
 
 ---

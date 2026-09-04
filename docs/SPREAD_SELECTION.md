@@ -13,7 +13,11 @@ the decision layer picked:
 
 1. **Expiries** — the nearest `expiries_to_screen` (3) listed expiries
    (weeklies included) at least `min_dte` (5) days out, ignoring anything
-   past `max_expiry_lookahead_days` (45). Steps 2–5 run per expiry; the
+   past `max_expiry_lookahead_days` (45). An expiry only counts if at least
+   `min_liquid_legs_per_expiry` (3) strikes within `max_width_pct` (5%) of
+   spot have open interest ≥ `min_open_interest` (`liquid_expirations`) — GLD, USO and XLE list
+   Mon/Tue/Wed dailies with a full strike grid and ~zero OI that would
+   otherwise fill all three slots. Steps 2–5 run per expiry; the
    ranking pools the survivors from all of them. `pick_expirations`
 2. **Strike universe** — strikes within ±`strike_band_pct` (10%) of spot.
    With `otm_only: true`: out-of-the-money strikes only (calls above spot,
@@ -55,6 +59,11 @@ parentheses.
   out (a separate exit rule closes anything that reaches DTE ≤ 2); the cap
   stops the screener from drifting into far-dated expiries whose premium is
   mostly time value unrelated to a bar-scale momentum signal.
+- **`min_liquid_legs_per_expiry` (3)** — an expiry is skipped unless this
+  many strikes within `max_width_pct` of spot have OI ≥ `min_open_interest`.
+  Measured near spot on purpose: GLD's dailies carry a handful of liquid
+  far-out strikes that a 2–5%-wide vertical can never use. Harmless for
+  SPY/QQQ (every daily qualifies); essential for ETFs whose dailies are empty.
 - **`expiries_to_screen` (3)** — how many of the nearest eligible expiries
   compete in one ranked pool. More expiries = more candidates and a real
   choice between near/cheap-theta and far/more-time spreads, at the cost of

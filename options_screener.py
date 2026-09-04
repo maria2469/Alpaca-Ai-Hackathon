@@ -1,9 +1,11 @@
 """Option screener: pick the expiry, enumerate debit verticals, filter, rank, plan.
 
 Pure functions over pre-fetched contracts and snapshots. Selection rule
-(approved 2026-08-31, width rule revised 2026-09-01): the nearest
-EXPIRIES_TO_SCREEN listed expiries (weeklies included) with DTE >= MIN_DTE,
-ranked as one pool; candidate strike pairs within +/-10% of spot
+(approved 2026-08-31, width rule revised 2026-09-01, empty-expiry skip added
+2026-09-01): the nearest EXPIRIES_TO_SCREEN listed expiries (weeklies included)
+with DTE >= MIN_DTE that have at least MIN_LIQUID_LEGS_PER_EXPIRY strikes within
+MAX_WIDTH_PCT of spot carrying open interest >= MIN_OPEN_INTEREST, ranked as
+one pool; candidate strike pairs within +/-10% of spot
 (OTM strikes plus the ATM bracketing strike when OTM_ONLY) whose width is
 between MIN_WIDTH_PCT and MAX_WIDTH_PCT of spot;
 liquidity filter per leg (open interest floor + quote quality); rank survivors
@@ -17,6 +19,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
+import pos_and_risk
 import settings
 from data_models import LegPlan, LegQuote, OpenSpread, OrderPlan, SpreadQuote
 
@@ -28,6 +31,28 @@ def pick_expirations(expirations: set[date], today: date) -> list[date]:
     settings.MIN_DTE days out, nearest first; empty when there are none."""
     eligible = sorted(exp for exp in expirations if (exp - today).days >= settings.MIN_DTE)
     return eligible[: settings.EXPIRIES_TO_SCREEN]
+
+
+def liquid_expirations(by_expiry: dict[date, dict[float, dict]], spot: float) -> set[date]:
+    """Expiries with at least settings.MIN_LIQUID_LEGS_PER_EXPIRY strikes within
+    settings.MAX_WIDTH_PCT of spot whose open_interest >= settings.MIN_OPEN_INTEREST
+    (None counts as 0).
+
+    ETFs like GLD/USO/XLE list Mon/Tue/Wed daily expiries with a full strike
+    grid but ~zero open interest near spot (the few liquid strikes sit far
+    out, useless for a 2-5%-wide vertical); without this filter they crowd out
+    the liquid Friday weekly and monthly in pick_expirations. Input is the
+    {expiry: {strike: {"symbol", "open_interest"}}} shape broker.fetch_contracts returns."""
+    liquid: set[date] = set()
+    for expiry, strikes in by_expiry.items():
+        count = sum(
+            1 for strike, info in strikes.items()
+            if abs(strike - spot) <= spot * settings.MAX_WIDTH_PCT
+            and (info.get("open_interest") or 0) >= settings.MIN_OPEN_INTEREST
+        )
+        if count >= settings.MIN_LIQUID_LEGS_PER_EXPIRY:
+            liquid.add(expiry)
+    return liquid
 
 
 def quote_spread_bps(leg: LegQuote) -> float:
@@ -73,7 +98,9 @@ def enumerate_spreads(
     (out of the money, or the ATM strike bracketing spot, when
     settings.OTM_ONLY) and pass check_leg; the
     width must be within [MIN_WIDTH_PCT, MAX_WIDTH_PCT] of spot; the spread
-    must price sanely (settings.MIN_NET_DEBIT <= debit < width).
+    must price sanely (settings.MIN_NET_DEBIT <= debit < width) and the debit
+    must sit inside [MIN_DEBIT_FRAC, MAX_DEBIT_FRAC] of width — a cheap debit
+    means a deep-OTM lottery ticket, an expensive one has no payoff left.
     """
     lo, hi = spot * (1 - settings.STRIKE_BAND_PCT), spot * (1 + settings.STRIKE_BAND_PCT)
     in_band = [s for s in quotes_by_strike if lo <= s <= hi]
@@ -124,6 +151,9 @@ def enumerate_spreads(
             net_debit = round(long_leg.ask - short_leg.bid, 2)  # type: ignore[operator]
             if not (settings.MIN_NET_DEBIT <= net_debit < width):
                 _reject("bad_debit")
+                continue
+            if not (settings.MIN_DEBIT_FRAC * width <= net_debit <= settings.MAX_DEBIT_FRAC * width):
+                _reject("debit_out_of_band")
                 continue
             skew = abs(short_leg.implied_vol - long_leg.implied_vol)  # type: ignore[operator]
             spreads.append(
@@ -189,6 +219,16 @@ def build_entry_plan(spread: SpreadQuote, qty: int, cycle_id: str) -> OrderPlan:
     )
 
 
+def _strike_tag(symbol: str) -> str:
+    """Strike in OCC thousandths from an OCC symbol ("...C00262500" -> "262500").
+
+    Digits only on purpose: Alpaca documents a 128-char cap on client_order_id but
+    not an allowed character set, so we stay within [A-Za-z0-9-]. Unparseable
+    symbols fall back to the raw symbol so the id still differs per spread.
+    """
+    return symbol[-8:].lstrip("0") or "0" if pos_and_risk.parse_occ(symbol) else symbol
+
+
 def build_exit_plan(
     spread: OpenSpread,
     long_quote: LegQuote,
@@ -199,11 +239,18 @@ def build_exit_plan(
 
     Per the SDK convention the net limit is negative when the close collects a
     credit (the normal case) and positive when closing costs money.
+
+    The client_order_id is unique per (cycle, spread): it carries both strikes,
+    because two spreads on the same underlying/expiry/type can exit in one cycle
+    and Alpaca refuses a duplicate id (seen 2026-09-01 with two AMZN call spreads).
     """
     if long_quote.bid is None or short_quote.ask is None:
         return None
     limit = round(short_quote.ask - long_quote.bid, 2)
-    tag = f"{spread.expiration:%y%m%d}{spread.option_type}"
+    tag = (
+        f"{spread.expiration:%y%m%d}{spread.option_type}"
+        f"{_strike_tag(spread.long_symbol)}-{_strike_tag(spread.short_symbol)}"
+    )
     return OrderPlan(
         kind="exit",
         underlying=spread.underlying,

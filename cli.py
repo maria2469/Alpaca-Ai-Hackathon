@@ -9,6 +9,7 @@ Run as: uv run --env-file .env cli.py <command>
 
 from __future__ import annotations
 
+import math
 import sys
 import time
 from dataclasses import asdict, replace
@@ -29,9 +30,11 @@ import sounds
 from data_models import (
     Config,
     EntryChoice,
+    OpenSpread,
     OrderPlan,
     SpreadQuote,
     SymbolFeatures,
+    journal_entries,
     to_json_line,
 )
 
@@ -78,11 +81,25 @@ def _screen_spread(
     spot: float,
     clock_time: datetime,
     today,
+    exclude_symbols: frozenset[str] = frozenset(),
 ) -> tuple[SpreadQuote | None, dict]:
     """Fetch chains + snapshots for one underlying and pick the best spread
-    across the nearest settings.EXPIRIES_TO_SCREEN eligible expiries."""
+    across the nearest settings.EXPIRIES_TO_SCREEN eligible expiries.
+
+    `exclude_symbols` are legs we already hold on this underlying. An add must
+    never touch them: Alpaca nets positions per contract, so buying a strike we
+    are short would shrink the held leg, leave the held spread unpaired, and
+    put it beyond the stop/take-profit manager.
+    """
     by_expiry = broker.fetch_contracts(trading, underlying, direction, spot, today)
-    expirations = options_screener.pick_expirations(set(by_expiry), today)
+    if exclude_symbols:
+        by_expiry = {
+            exp: {k: info for k, info in chain.items() if info["symbol"] not in exclude_symbols}
+            for exp, chain in by_expiry.items()
+        }
+    expirations = options_screener.pick_expirations(
+        options_screener.liquid_expirations(by_expiry, spot), today
+    )
     if not expirations:
         return None, {"no_expiration": 1}
     symbols = [
@@ -163,7 +180,7 @@ def run_cycle(
         dict.fromkeys(config.symbols + tuple(s.underlying for s in spreads))
     )
     try:
-        mids = broker.fetch_spot_mids(stock_data, watch_symbols)
+        mids = broker.fetch_spot_mids(stock_data, watch_symbols, clock.server_time)
     except broker.BrokerError as error:
         # Exits must still run on a quote outage; entries will gate out naturally.
         logger.error("quote read failed, exits still run, entries blocked: {}", error)
@@ -174,6 +191,7 @@ def run_cycle(
 
     # --- Position manager: mechanical exits run before entries and are never gated ---
     exits: list[dict] = []
+    exiting: set[str] = set()  # underlyings with an exit this cycle: never add to those
     if spreads:
         leg_symbols = [
             s for spread in spreads for s in (spread.long_symbol, spread.short_symbol)
@@ -228,6 +246,7 @@ def run_cycle(
             if entry.get("receipt", {}).get("submitted"):
                 _RECENT_EXITS[spread.underlying] = time.monotonic()
             exits.append(entry)
+            exiting.add(spread.underlying)
             logger.info(
                 "exit {}: {}",
                 entry["spread"],
@@ -237,29 +256,40 @@ def run_cycle(
 
     # --- Entry candidates: whitelist symbols only ---
     whitelist_features = {symbol: features[symbol] for symbol in config.symbols}
-    busy = {s.underlying for s in spreads} | {
+    pending = {
         pos_and_risk.parse_occ(sym)[0]
         for sym in account.open_order_symbols
         if pos_and_risk.parse_occ(sym) is not None
     }
     now_ts = time.monotonic()
+    held_by_underlying: dict[str, list[OpenSpread]] = {}
+    for spread in spreads:
+        held_by_underlying.setdefault(spread.underlying, []).append(spread)
     candidates = []
     for c in signals.build_candidates(
         whitelist_features, clock.is_open, config.bar_seconds
     ):
-        if c.gate_block is None and c.symbol in busy:
-            # a held/pending underlying is not a candidate
-            c = replace(c, gate_block="already_held")
-        elif c.gate_block is None and (now_ts - _RECENT_EXITS.get(c.symbol, 0.0) < POST_EXIT_COOLDOWN_SECONDS):
+        if c.gate_block is None:
+            c = _gate_held(
+                c,
+                held_by_underlying.get(c.symbol, []),
+                pending=c.symbol in pending,
+                exiting=c.symbol in exiting,
+            )
+        if c.gate_block is None and (now_ts - _RECENT_EXITS.get(c.symbol, 0.0) < POST_EXIT_COOLDOWN_SECONDS):
             c = replace(c, gate_block="post_exit_cooldown")
         candidates.append(c)
     record["candidates"] = [
         {
             "symbol": c.symbol,
+            "mid": c.mid,  # journaled so the post-close review can grade decisions against later prices
             "events": [e.kind for e in c.events],
             "rsi": c.rsi,
             "atr": c.atr,
             "macd_hist": c.macd_hist,
+            "ema_fast_dist": c.ema_fast_dist,
+            "ema_slow_dist": c.ema_slow_dist,
+            "held": c.held,
             "gate_block": c.gate_block,
         }
         for c in candidates
@@ -268,35 +298,68 @@ def run_cycle(
     logger.info("candidates passing gates: {}", [c.symbol for c in tradeable] or "none")
 
     # --- Decision + screener + risk + execution ---
-    record["entry"] = None
-    choice = (
-        _decide(tradeable, config, manual_mode, llm_transport) if tradeable else None
+    # One decision at a time; ask again with the remaining candidates until the
+    # cycle has placed floor(per_cycle / per_entry) entries (2 with the shipped
+    # settings), the decider passes, or candidates run out. Rejected attempts
+    # (no spread, risk caps, recheck) consume their symbol but not a slot.
+    max_entries = max(
+        1, math.floor(settings.PER_CYCLE_FRACTION / settings.PER_ENTRY_FRACTION)
     )
-    if choice is not None:
-        underlying_risk = pos_and_risk.open_premium_at_risk(
-            [s for s in spreads if s.underlying == choice.symbol]
-        )
-        record["entry"] = _attempt_entry(
-            choice,
-            features[choice.symbol].mid,
-            config,
-            trading,
-            option_data,
-            account.equity,
-            open_risk,
-            underlying_risk,
-            account.open_order_symbols,
-            cycle_id,
-            execute,
-        )
+    entries: list[dict] = []
+    record["entries"] = entries
+    cycle_spent = 0.0  # premium committed by earlier entries in this cycle
+    planned = 0
+    remaining = list(tradeable)
+    while remaining and planned < max_entries:
+        choice = _decide(remaining, config, manual_mode, llm_transport)
+        if choice is None:
+            break
+        remaining = [c for c in remaining if c.symbol != choice.symbol]
+        held = held_by_underlying.get(choice.symbol, [])
+        if held and choice.direction != pos_and_risk.held_direction(held):
+            # Deterministic guard: an add must follow the held spread's direction,
+            # whatever the decider (LLM or human) replied.
+            entry = {
+                "symbol": choice.symbol,
+                "direction": choice.direction,
+                "thesis": choice.thesis,
+                "model": choice.model,
+                "rejected": "opposes_held_spread",
+            }
+            logger.info(
+                "entry refused: {} {} opposes the held spread", choice.symbol, choice.direction
+            )
+        else:
+            entry = _attempt_entry(
+                choice,
+                features[choice.symbol].mid,
+                config,
+                trading,
+                option_data,
+                account.equity,
+                open_risk,
+                pos_and_risk.open_premium_at_risk(held),
+                account.open_order_symbols,
+                cycle_id,
+                execute,
+                cycle_spent=cycle_spent,
+                exclude_symbols=frozenset(
+                    leg for s in held for leg in (s.long_symbol, s.short_symbol)
+                ),
+            )
+        entries.append(entry)
+        receipt = entry.get("receipt") or {}
+        if receipt.get("submitted") or receipt.get("dry_run"):
+            cycle_spent += entry["premium"]
+            planned += 1
 
-    submitted = [e for e in exits if e.get("receipt", {}).get("submitted")] or (
-        record["entry"] or {}
-    ).get("receipt", {}).get("submitted")
+    submitted = any(
+        (e.get("receipt") or {}).get("submitted") for e in exits + entries
+    )
     record["outcome"] = (
         "submitted"
         if submitted
-        else ("planned" if not execute and (exits or record["entry"]) else "hold")
+        else ("planned" if not execute and (exits or entries) else "hold")
     )
 
     # Rich hold reason — makes it easy to see exactly why no entry was taken
@@ -321,6 +384,32 @@ def run_cycle(
 
     append_journal(record)
     return record
+
+
+def _gate_held(
+    c: SymbolFeatures, held: list[OpenSpread], *, pending: bool, exiting: bool
+) -> SymbolFeatures:
+    """Entry gates for an underlying we already hold or have an open order on.
+
+    allow_stacking off: any held or pending underlying is out (already_held).
+    allow_stacking on: a further entry is allowed only as an ADD in the held
+    spread's direction — a pending order or a same-cycle exit still blocks,
+    events against the held direction are dropped, and the candidate carries
+    the held direction so the decider knows it is adding.
+    """
+    if not held and not pending:
+        return c
+    if not settings.ALLOW_STACKING:
+        return replace(c, gate_block="already_held")
+    if pending:
+        return replace(c, gate_block="pending_order")
+    if exiting:
+        return replace(c, gate_block="exiting")
+    direction = pos_and_risk.held_direction(held)  # None = mixed book, no add
+    aligned = tuple(e for e in c.events if e.direction == direction)
+    if not aligned:
+        return replace(c, gate_block="opposing_held", held=direction)
+    return replace(c, events=aligned, held=direction)
 
 
 def _build_trading_signals(
@@ -388,6 +477,15 @@ def _decide(
     return choice
 
 
+def _veto(entry: dict, reason: str) -> dict:
+    """Record a pre-order veto on the entry and say so in the log, not just the journal."""
+    entry["rejected"] = reason
+    logger.info(
+        "entry vetoed before submit: {} {} — {}", entry.get("symbol"), entry.get("direction"), reason
+    )
+    return entry
+
+
 def _attempt_entry(
     choice: EntryChoice,
     spot: float | None,
@@ -400,6 +498,9 @@ def _attempt_entry(
     pending_symbols: frozenset[str],
     cycle_id: str,
     execute: bool,
+    *,
+    cycle_spent: float,
+    exclude_symbols: frozenset[str] = frozenset(),
 ) -> dict:
     entry: dict = {
         "symbol": choice.symbol,
@@ -423,6 +524,7 @@ def _attempt_entry(
             spot,
             screen_clock.server_time,
             screen_clock.server_time.date(),
+            exclude_symbols,
         )
     except broker.BrokerError as error:
         entry["rejected"] = str(error)
@@ -446,7 +548,7 @@ def _attempt_entry(
         "skew": round(spread.skew, 4),
     }
     qty, reason = pos_and_risk.size_entry(
-        spread.net_debit, equity, open_risk, underlying_risk, cycle_spent=0.0
+        spread.net_debit, equity, open_risk, underlying_risk, cycle_spent=cycle_spent
     )
     if reason is not None:
         entry["rejected"] = reason
@@ -462,11 +564,9 @@ def _attempt_entry(
             option_data, [spread.long.symbol, spread.short.symbol]
         )
     except broker.BrokerError as error:
-        entry["rejected"] = f"recheck: {error}"
-        return entry
+        return _veto(entry, f"recheck: {error}")
     if {spread.long.symbol, spread.short.symbol} & fresh_account.open_order_symbols:
-        entry["rejected"] = "pending_order_conflict"
-        return entry
+        return _veto(entry, "pending_order_conflict")
     long_q = broker.leg_quote_from_snapshot(
         spread.long.symbol,
         spread.long.strike,
@@ -482,21 +582,19 @@ def _attempt_entry(
     for leg in (long_q, short_q):
         failure = options_screener.check_leg(leg, fresh_clock.server_time)
         if failure is not None:
-            entry["rejected"] = f"recheck: {failure}"
-            return entry
+            return _veto(entry, f"recheck: {failure}")
     fresh_debit = round(long_q.ask - short_q.bid, 2)  # type: ignore[operator]
     if not (settings.MIN_NET_DEBIT <= fresh_debit < spread.width):
-        entry["rejected"] = "recheck: bad_debit"
-        return entry
+        return _veto(entry, "recheck: bad_debit")
+    if not (settings.MIN_DEBIT_FRAC * spread.width <= fresh_debit <= settings.MAX_DEBIT_FRAC * spread.width):
+        return _veto(entry, "recheck: debit_out_of_band")
     qty, reason = pos_and_risk.size_entry(
-        fresh_debit, fresh_account.equity, open_risk, underlying_risk, cycle_spent=0.0
+        fresh_debit, fresh_account.equity, open_risk, underlying_risk, cycle_spent=cycle_spent
     )
     if reason is not None:
-        entry["rejected"] = f"recheck: {reason}"
-        return entry
+        return _veto(entry, f"recheck: {reason}")
     if execute and (fresh_account.options_level or 0) < MIN_OPTIONS_LEVEL:
-        entry["rejected"] = "options_level_too_low"
-        return entry
+        return _veto(entry, "options_level_too_low")
 
     fresh_spread = SpreadQuote(
         underlying=spread.underlying,
@@ -508,6 +606,7 @@ def _attempt_entry(
         net_debit=fresh_debit,
         skew=spread.skew,
     )
+    entry["premium"] = round(fresh_debit * qty * 100.0, 2)  # dollars this entry commits
     plan = options_screener.build_entry_plan(fresh_spread, qty, cycle_id)
     entry["receipt"] = _settle(trading, plan, execute)
     return entry
@@ -560,10 +659,10 @@ def _new_orders(record: dict) -> dict[str, str]:
         receipt = exit_entry.get("receipt") or {}
         if receipt.get("submitted") and receipt.get("order_id"):
             orders[receipt["order_id"]] = f"exit {exit_entry.get('spread')}"
-    entry = record.get("entry") or {}
-    receipt = entry.get("receipt") or {}
-    if receipt.get("submitted") and receipt.get("order_id"):
-        orders[receipt["order_id"]] = f"entry {entry.get('symbol')}"
+    for entry in journal_entries(record):
+        receipt = entry.get("receipt") or {}
+        if receipt.get("submitted") and receipt.get("order_id"):
+            orders[receipt["order_id"]] = f"entry {entry.get('symbol')}"
     return orders
 
 
@@ -802,7 +901,7 @@ def candidates() -> None:
     setup_logging()
     config, trading, stock_data, _ = _bootstrap()
     clock = broker.fetch_clock(trading)
-    mids = broker.fetch_spot_mids(stock_data, config.symbols)
+    mids = broker.fetch_spot_mids(stock_data, config.symbols, clock.server_time)
     features = _build_trading_signals(
         config.symbols, config, stock_data, mids, clock.server_time
     )
@@ -811,8 +910,11 @@ def candidates() -> None:
         rsi = f"{c.rsi:.1f}" if c.rsi is not None else "-"
         atr = f"{c.atr:.3f}" if c.atr is not None else "-"
         hist = f"{c.macd_hist:+.4f}" if c.macd_hist is not None else "-"
+        ema_fast = f"{c.ema_fast_dist:+.2f}" if c.ema_fast_dist is not None else "-"
+        ema_slow = f"{c.ema_slow_dist:+.2f}" if c.ema_slow_dist is not None else "-"
         typer.echo(
             f"{c.symbol:<6} mid={c.mid} rsi={rsi} atr={atr} macd_hist={hist} "
+            f"ema{settings.TREND_EMA_FAST}={ema_fast} ema{settings.TREND_EMA_SLOW}={ema_slow} "
             f"events={events} gate={c.gate_block or 'PASS'}"
         )
 
@@ -830,7 +932,7 @@ def screen(
     config, trading, stock_data, option_data = _bootstrap()
     clock = broker.fetch_clock(trading)
     symbol = symbol.upper()
-    spot = broker.fetch_spot_mids(stock_data, (symbol,))[symbol]
+    spot = broker.fetch_spot_mids(stock_data, (symbol,), clock.server_time)[symbol]
     if spot is None:
         typer.echo("no usable underlying quote")
         raise typer.Exit(1)

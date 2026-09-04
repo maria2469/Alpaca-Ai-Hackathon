@@ -85,14 +85,16 @@ def _string_list(value: object, path: str) -> tuple[str, ...]:
 _TOP_KEYS = {"symbols", "bar_timeframe", "loop_interval_seconds",
              "signals", "screener", "risk", "exits", "llm"}
 _SIGNAL_KEYS = {"rsi_period", "atr_period", "macd_fast", "macd_slow", "macd_signal",
-                "atr_event_mult", "macd_min_atr_mult", "rsi_call_max", "rsi_put_min",
-                "stale_bar_factor", "min_bars"}
+                "atr_event_mult", "stale_bar_factor", "min_bars",
+                "macd_min_hist_atr", "rsi_overbought", "rsi_oversold",
+                "trend_ema_fast", "trend_ema_slow"}
 _SCREENER_KEYS = {"min_dte", "max_expiry_lookahead_days", "expiries_to_screen",
                   "strike_band_pct", "otm_only", "min_width_pct", "max_width_pct",
                   "min_open_interest", "max_quote_age_seconds", "max_leg_spread_bps",
-                  "min_net_debit"}
+                  "min_net_debit", "min_liquid_legs_per_expiry",
+                  "min_debit_frac", "max_debit_frac"}
 _RISK_KEYS = {"per_entry_fraction", "per_underlying_fraction", "per_cycle_fraction",
-              "total_fraction"}
+              "total_fraction", "allow_stacking"}
 _EXIT_KEYS = {"stop_fraction", "take_profit_mult", "exit_dte", "reversal_exit"}
 _LLM_KEYS = {"primary_model", "fallback_models"}
 
@@ -126,14 +128,23 @@ def validate(raw: object) -> dict[str, object]:
     if values["MACD_FAST"] >= values["MACD_SLOW"]:
         _fail("signals.macd_fast", "must be smaller than macd_slow", sig["macd_fast"])
     values["ATR_EVENT_MULT"] = _number(sig, "signals", "atr_event_mult", 0, lo_open=True)
-    values["MACD_MIN_ATR_MULT"] = _number(sig, "signals", "macd_min_atr_mult", 0)
-    values["RSI_CALL_MAX"] = _number(sig, "signals", "rsi_call_max", 50, 100, hi_open=True)
-    values["RSI_PUT_MIN"] = _number(sig, "signals", "rsi_put_min", 0, 50, hi_open=True)
-    if values["RSI_PUT_MIN"] >= values["RSI_CALL_MAX"]:
-        _fail("signals.rsi_put_min", "must be less than rsi_call_max", sig["rsi_put_min"])
     values["STALE_BAR_FACTOR"] = _number(sig, "signals", "stale_bar_factor", 1)
     values["MIN_BARS"] = _integer(sig, "signals", "min_bars",
                                   values["MACD_SLOW"] + values["MACD_SIGNAL"])
+    values["MACD_MIN_HIST_ATR"] = _number(sig, "signals", "macd_min_hist_atr", 0, 1)
+    values["RSI_OVERBOUGHT"] = _number(sig, "signals", "rsi_overbought", 50, 100)
+    values["RSI_OVERSOLD"] = _number(sig, "signals", "rsi_oversold", 0, 50)
+    if values["RSI_OVERSOLD"] >= values["RSI_OVERBOUGHT"]:
+        _fail("signals.rsi_oversold", "must be smaller than rsi_overbought", sig["rsi_oversold"])
+    values["TREND_EMA_FAST"] = _integer(sig, "signals", "trend_ema_fast", 1)
+    values["TREND_EMA_SLOW"] = _integer(sig, "signals", "trend_ema_slow", 1)
+    if values["TREND_EMA_FAST"] >= values["TREND_EMA_SLOW"]:
+        _fail("signals.trend_ema_fast", "must be smaller than trend_ema_slow", sig["trend_ema_fast"])
+
+    # Backward compatibility aliases for agents architecture & legacy tests
+    values["MACD_MIN_ATR_MULT"] = values["MACD_MIN_HIST_ATR"]
+    values["RSI_CALL_MAX"] = values["RSI_OVERBOUGHT"]
+    values["RSI_PUT_MIN"] = values["RSI_OVERSOLD"]
 
     scr = _section(raw, "screener", _SCREENER_KEYS)
     values["MIN_DTE"] = _integer(scr, "screener", "min_dte", 1)
@@ -149,9 +160,14 @@ def validate(raw: object) -> dict[str, object]:
     if values["MIN_WIDTH_PCT"] > values["MAX_WIDTH_PCT"]:
         _fail("screener.min_width_pct", "must not exceed max_width_pct", scr["min_width_pct"])
     values["MIN_OPEN_INTEREST"] = _integer(scr, "screener", "min_open_interest", 0)
+    values["MIN_LIQUID_LEGS_PER_EXPIRY"] = _integer(scr, "screener", "min_liquid_legs_per_expiry", 0)
     values["MAX_QUOTE_AGE_SECONDS"] = _number(scr, "screener", "max_quote_age_seconds", 0, lo_open=True)
     values["MAX_LEG_SPREAD_BPS"] = _number(scr, "screener", "max_leg_spread_bps", 0, lo_open=True)
     values["MIN_NET_DEBIT"] = _number(scr, "screener", "min_net_debit", 0, lo_open=True)
+    values["MIN_DEBIT_FRAC"] = _number(scr, "screener", "min_debit_frac", 0, 1, lo_open=True, hi_open=True)
+    values["MAX_DEBIT_FRAC"] = _number(scr, "screener", "max_debit_frac", 0, 1, lo_open=True, hi_open=True)
+    if values["MIN_DEBIT_FRAC"] > values["MAX_DEBIT_FRAC"]:
+        _fail("screener.min_debit_frac", "must not exceed max_debit_frac", scr["min_debit_frac"])
 
     risk = _section(raw, "risk", _RISK_KEYS)
     values["PER_ENTRY_FRACTION"] = _number(risk, "risk", "per_entry_fraction", 0, 1, lo_open=True)
@@ -164,6 +180,9 @@ def validate(raw: object) -> dict[str, object]:
     if values["PER_UNDERLYING_FRACTION"] > values["TOTAL_FRACTION"]:
         _fail("risk.per_underlying_fraction", "must not exceed total_fraction",
               risk["per_underlying_fraction"])
+    if not isinstance(risk["allow_stacking"], bool):
+        _fail("risk.allow_stacking", "must be true or false", risk["allow_stacking"])
+    values["ALLOW_STACKING"] = risk["allow_stacking"]
 
     exits = _section(raw, "exits", _EXIT_KEYS)
     values["STOP_FRACTION"] = _number(exits, "exits", "stop_fraction", 0, 1, lo_open=True, hi_open=True)
@@ -216,6 +235,11 @@ RSI_CALL_MAX: float = _VALUES["RSI_CALL_MAX"]  # type: ignore[assignment]
 RSI_PUT_MIN: float = _VALUES["RSI_PUT_MIN"]  # type: ignore[assignment]
 STALE_BAR_FACTOR: float = _VALUES["STALE_BAR_FACTOR"]  # type: ignore[assignment]
 MIN_BARS: int = _VALUES["MIN_BARS"]  # type: ignore[assignment]
+MACD_MIN_HIST_ATR: float = _VALUES["MACD_MIN_HIST_ATR"]  # type: ignore[assignment]
+RSI_OVERBOUGHT: float = _VALUES["RSI_OVERBOUGHT"]  # type: ignore[assignment]
+RSI_OVERSOLD: float = _VALUES["RSI_OVERSOLD"]  # type: ignore[assignment]
+TREND_EMA_FAST: int = _VALUES["TREND_EMA_FAST"]  # type: ignore[assignment]
+TREND_EMA_SLOW: int = _VALUES["TREND_EMA_SLOW"]  # type: ignore[assignment]
 MIN_DTE: int = _VALUES["MIN_DTE"]  # type: ignore[assignment]
 MAX_EXPIRY_LOOKAHEAD_DAYS: int = _VALUES["MAX_EXPIRY_LOOKAHEAD_DAYS"]  # type: ignore[assignment]
 EXPIRIES_TO_SCREEN: int = _VALUES["EXPIRIES_TO_SCREEN"]  # type: ignore[assignment]
@@ -224,13 +248,17 @@ OTM_ONLY: bool = _VALUES["OTM_ONLY"]  # type: ignore[assignment]
 MIN_WIDTH_PCT: float = _VALUES["MIN_WIDTH_PCT"]  # type: ignore[assignment]
 MAX_WIDTH_PCT: float = _VALUES["MAX_WIDTH_PCT"]  # type: ignore[assignment]
 MIN_OPEN_INTEREST: int = _VALUES["MIN_OPEN_INTEREST"]  # type: ignore[assignment]
+MIN_LIQUID_LEGS_PER_EXPIRY: int = _VALUES["MIN_LIQUID_LEGS_PER_EXPIRY"]  # type: ignore[assignment]
 MAX_QUOTE_AGE_SECONDS: float = _VALUES["MAX_QUOTE_AGE_SECONDS"]  # type: ignore[assignment]
 MAX_LEG_SPREAD_BPS: float = _VALUES["MAX_LEG_SPREAD_BPS"]  # type: ignore[assignment]
 MIN_NET_DEBIT: float = _VALUES["MIN_NET_DEBIT"]  # type: ignore[assignment]
+MIN_DEBIT_FRAC: float = _VALUES["MIN_DEBIT_FRAC"]  # type: ignore[assignment]
+MAX_DEBIT_FRAC: float = _VALUES["MAX_DEBIT_FRAC"]  # type: ignore[assignment]
 PER_ENTRY_FRACTION: float = _VALUES["PER_ENTRY_FRACTION"]  # type: ignore[assignment]
 PER_UNDERLYING_FRACTION: float = _VALUES["PER_UNDERLYING_FRACTION"]  # type: ignore[assignment]
 PER_CYCLE_FRACTION: float = _VALUES["PER_CYCLE_FRACTION"]  # type: ignore[assignment]
 TOTAL_FRACTION: float = _VALUES["TOTAL_FRACTION"]  # type: ignore[assignment]
+ALLOW_STACKING: bool = _VALUES["ALLOW_STACKING"]  # type: ignore[assignment]
 STOP_FRACTION: float = _VALUES["STOP_FRACTION"]  # type: ignore[assignment]
 TAKE_PROFIT_MULT: float = _VALUES["TAKE_PROFIT_MULT"]  # type: ignore[assignment]
 EXIT_DTE: int = _VALUES["EXIT_DTE"]  # type: ignore[assignment]

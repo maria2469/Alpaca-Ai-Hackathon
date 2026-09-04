@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -20,6 +21,9 @@ def pinned_screener_settings(monkeypatch):
     monkeypatch.setattr(settings, "MIN_WIDTH_PCT", 0.03)
     monkeypatch.setattr(settings, "MAX_WIDTH_PCT", 0.05)
     monkeypatch.setattr(settings, "EXPIRIES_TO_SCREEN", 3)
+    # Wide-open debit band: the band has its own dedicated test below.
+    monkeypatch.setattr(settings, "MIN_DEBIT_FRAC", 0.01)
+    monkeypatch.setattr(settings, "MAX_DEBIT_FRAC", 0.99)
 
 
 def leg(
@@ -45,6 +49,27 @@ def test_pick_expirations_nearest_n_at_least_5_dte(monkeypatch):
     assert screener.pick_expirations({friday_weekly}, TODAY) == []
     boundary = date(2026, 9, 5)  # DTE exactly 5 qualifies
     assert screener.pick_expirations({boundary}, TODAY) == [boundary]
+
+
+def test_liquid_expirations_drops_expiries_without_two_liquid_strikes(monkeypatch):
+    monkeypatch.setattr(settings, "MIN_OPEN_INTEREST", 100)
+    monkeypatch.setattr(settings, "MIN_LIQUID_LEGS_PER_EXPIRY", 2)
+    spot = 400.0  # MAX_WIDTH_PCT is pinned to 0.05 -> strikes 380..420 count
+    daily = date(2026, 9, 8)  # GLD Tuesday: liquid OI only far out of the money
+    weekly = date(2026, 9, 11)
+    thin = date(2026, 9, 14)  # one liquid strike near spot
+    by_expiry = {
+        daily: {
+            400.0: {"symbol": "A", "open_interest": 0},
+            401.0: {"symbol": "B", "open_interest": None},
+            430.0: {"symbol": "C", "open_interest": 900},  # outside 5% of spot
+            440.0: {"symbol": "D", "open_interest": 900},
+        },
+        weekly: {400.0: {"symbol": "E", "open_interest": 100}, 420.0: {"symbol": "F", "open_interest": 2500}},
+        thin: {400.0: {"symbol": "G", "open_interest": 800}, 401.0: {"symbol": "H", "open_interest": 99}},
+    }
+    assert screener.liquid_expirations(by_expiry, spot) == {weekly}
+    assert screener.liquid_expirations({}, spot) == set()
 
 
 # --- leg quality ---
@@ -167,6 +192,20 @@ def test_otm_plus_atm_put_keeps_bracketing_strike(monkeypatch):
     }
 
 
+def test_debit_band_rejects_lottery_and_overpriced(monkeypatch):
+    monkeypatch.setattr(settings, "MIN_DEBIT_FRAC", 0.25)
+    monkeypatch.setattr(settings, "MAX_DEBIT_FRAC", 0.45)
+    quotes = {
+        95.0: leg("C95", 95.0, bid=6.0, ask=6.1),     # 95/100: debit 2.7 / width 5 = 0.54 -> too expensive
+        100.0: leg("C100", 100.0, bid=3.4, ask=3.5),
+        103.0: leg("C103", 103.0, bid=3.0, ask=3.05),  # 100/103: debit 0.5 / width 3 = 0.17 -> lottery ticket
+        105.0: leg("C105", 105.0, bid=1.5, ask=1.55),  # 100/105: debit 2.0 / width 5 = 0.40 -> kept
+    }
+    spreads, rejections = screener.enumerate_spreads(quotes, "CALL", 100.0, EXP, "SPY", NOW)
+    assert {(s.long.symbol, s.short.symbol) for s in spreads} == {("C100", "C105")}
+    assert rejections.get("debit_out_of_band") == 2
+
+
 def test_debit_sanity_rejections():
     quotes = {
         95.0: leg("A", 95.0, bid=8.2, ask=8.4, iv=0.2),
@@ -228,7 +267,7 @@ def test_select_spread_ranks_across_expiries():
 def open_spread():
     return OpenSpread(
         underlying="SPY", expiration=EXP, option_type="C",
-        long_symbol="LSYM", short_symbol="SSYM", qty=2, net_entry_debit=2.0,
+        long_symbol="SPY260911C00450000", short_symbol="SPY260911C00455000", qty=2, net_entry_debit=2.0,
     )
 
 
@@ -251,7 +290,22 @@ def test_exit_plan_credit_is_negative_net_price():
     assert plan.limit_price == round(3.2 - 6.0, 2) == -2.8  # credit -> negative
     assert plan.legs[0].intent == "sell_to_close" and plan.legs[1].intent == "buy_to_close"
     assert plan.qty == 2
-    assert plan.client_order_id == "sp-20260831-150000-exit-SPY-260911C"
+    assert plan.client_order_id == "sp-20260831-150000-exit-SPY-260911C450000-455000"
+
+
+def test_exit_plan_ids_differ_for_two_spreads_same_expiry_and_type():
+    # 2026-09-01 18:50: two AMZN 2026-09-11 call spreads exited in one cycle and shared an id,
+    # so Alpaca refused the second order. The strikes must make the ids distinct.
+    exp = date(2026, 9, 11)
+    a = OpenSpread(underlying="AMZN", expiration=exp, option_type="C",
+                   long_symbol="AMZN260911C00260000", short_symbol="AMZN260911C00267500", qty=5, net_entry_debit=1.82)
+    b = OpenSpread(underlying="AMZN", expiration=exp, option_type="C",
+                   long_symbol="AMZN260911C00262500", short_symbol="AMZN260911C00270000", qty=7, net_entry_debit=1.30)
+    ids = {screener.build_exit_plan(s, leg(bid=1.0, ask=1.1), leg(bid=0.5, ask=0.6), "20260901-185000").client_order_id
+           for s in (a, b)}
+    assert ids == {"sp-20260901-185000-exit-AMZN-260911C260000-267500", "sp-20260901-185000-exit-AMZN-260911C262500-270000"}
+    # Alpaca caps the id at 128 chars and documents no character set: stay alphanumeric + hyphen.
+    assert all(len(i) <= 128 and re.fullmatch(r"[A-Za-z0-9-]+", i) for i in ids)
 
 
 def test_exit_plan_refuses_missing_quotes():

@@ -26,7 +26,7 @@ uv run --env-file .env cli.py account 2>&1        # equity, open spreads, premiu
 tail -n 10 logs/cycles.jsonl                      # recent cycle history
 ```
 
-From the journal tail, note: recent outcomes, screen rejections (an underlying that repeatedly finds no acceptable spread will likely reject again), which underlyings are already held or pending (they gate out as `already_held`), and open-risk warnings.
+From the journal tail, note: recent outcomes, screen rejections (an underlying that repeatedly finds no acceptable spread will likely reject again), which underlyings are already held or pending (a pending order gates out as `pending_order`, a same-cycle exit as `exiting`, an event against the held direction as `opposing_held`; with `allow_stacking: false` anything held gates as `already_held`) — a held underlying can still be a candidate for a same-direction add, and its `held` field names that direction — and open-risk warnings.
 
 If the market is closed or no candidate passes its gate, skip to Step 3 and run the cycle anyway (it journals the state and runs exits when relevant), then deploy.
 
@@ -35,20 +35,24 @@ If the market is closed or no candidate passes its gate, skip to Step 3 and run 
 Evaluate every gate-passing candidate with fired events. For each, reason explicitly about:
 
 - **Event quality**: a gap or breakout beyond 2 ATR is a strong impulse; a bare MACD zero-cross is weaker confirmation-only evidence.
+- **Bare MACD crosses need a second leg to stand on.** On 2026-09-02 every losing or vetoed pick was a `macd_cross_*` with no other event, taken on a "trend resumption" or "broad rollover" story, while the passes that cited whipsaw or trend disagreement were right 22 times out of 22. Do not take a cross alone. It qualifies only with at least one of: a same-bar gap/breakout; price on the event's side of **both** EMAs (`ema25`/`ema50` columns) with |hist|/ATR ≥ 0.10; or a clearly stated higher-timeframe reason. Never take a second cross in the same direction on the same symbol within a session — the first one already told you the name is oscillating.
 - **Trend confirmation**: does the MACD histogram's sign and magnitude agree with the event direction?
 - **Exhaustion risk**: extreme RSI *against* the move (e.g. RSI > 70 on a gap_up) argues the move is spent — momentum traders chase strength, not tops. Conflicting events on the same bar are a reason to pass.
 - **Volatility context**: ATR relative to price — enough range to pay for a debit spread, not so wild that the spread quotes will be junk.
 - **History**: what the journal says about this underlying's recent screen rejections and holdings.
 
-Pick **at most one** candidate and direction (CALL = expect rise, PUT = expect fall), or pass. Write the reasoning out in your reply before executing — that is the point of this skill.
+Pick **at most one** candidate and direction (CALL = expect rise, PUT = expect fall) per prompt, or pass. After an entry is placed the run asks again with the **remaining** candidates (re-numbered from 1), up to `per_cycle_fraction / per_entry_fraction` entries per cycle (2 with the shipped settings). Taking a second entry is the exception, not the norm — it needs its own momentum thesis, not a correlated echo of the first (SPY then QQQ is one bet twice). Write the reasoning out in your reply before executing — that is the point of this skill.
 
 ## Step 3 — Run the cycle
 
 Manual mode lists tradeable candidates (gate PASS **and** at least one event) **sorted alphabetically by symbol**, numbered from 1, then asks for a number and a direction. Derive your index from that ordering.
 
 ```bash
-# entering candidate N with an explicit direction:
+# entering candidate N with an explicit direction (end of input = pass on the second prompt):
 printf "N\nCALL\n" | uv run --env-file .env cli.py run --manual-mode --execute 2>&1
+
+# entering two: N from the first list, then M from the re-numbered list WITHOUT the first symbol:
+printf "N\nCALL\nM\nPUT\n" | uv run --env-file .env cli.py run --manual-mode --execute 2>&1
 
 # passing (no entry; exits and journaling still run):
 printf "\n" | uv run --env-file .env cli.py run --manual-mode --execute 2>&1
@@ -71,6 +75,8 @@ The candidate list is recomputed inside the run, so the index can drift if a gat
 ```bash
 sh surge_artifacts/paca-cycles/deploy.sh
 curl -sI https://alpaca-hackathon-2026-artifacts-paca-cycles.surge.sh | head -1   # expect HTTP 200
+sh surge_artifacts/paca-candles/deploy.sh
+curl -sI https://alpaca-hackathon-2026-artifacts-paca-candles.surge.sh | head -1  # expect HTTP 200
 ```
 
 Run this even when the market was closed or you passed — the dashboard should always reflect the latest cycle.
