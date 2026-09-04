@@ -135,6 +135,14 @@ class TradingGraph:
         start_time = datetime.utcnow()
         logger.info("Executing Decision Agent")
         
+        # If this is a negotiation re-entry following a risk challenge:
+        if state.risk_decision and not state.risk_decision.approved:
+            state.negotiation_count += 1
+            if state.critic_analysis and state.critic_analysis.consensus_symbol:
+                rejected_sym = state.critic_analysis.consensus_symbol
+                logger.info(f"Decision Agent: Counter-proposal deliberation excluding challenged symbol {rejected_sym}")
+                state.opportunities = [o for o in state.opportunities if o.symbol != rejected_sym]
+
         try:
             agent = self.agents["decision_agent"]
             # Decision agent gets more time but has parallel execution
