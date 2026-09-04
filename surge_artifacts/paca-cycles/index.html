@@ -126,11 +126,11 @@ header h1 .home:hover, header h1 .home:focus-visible { text-decoration: underlin
 .snapshot-meta b { color: var(--ink); font-weight: 600; }
 .stale { background: color-mix(in oklab, var(--warning) 18%, transparent);
   padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; }
-.cfg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.cfg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; }
 .cfg-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
-.cfg-card .kv { grid-template-columns: max-content 1fr; row-gap: 5px; }
-.cfg-card .kv dt { color: var(--ink-2); }
-.cfg-card .kv dd { text-align: right; }
+.cfg-card .kv { grid-template-columns: fit-content(60%) 1fr; row-gap: 5px; }
+.cfg-card .kv dt { color: var(--ink-2); overflow-wrap: anywhere; }
+.cfg-card .kv dd { text-align: right; min-width: 0; overflow-wrap: anywhere; }
 .sym-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* ---------- KPI row ---------- */
@@ -994,6 +994,7 @@ const CONFIG_SECTIONS = [
     min_dte: ["min days to expiry", String],
     max_expiry_lookahead_days: ["max expiry lookahead", v => v + " days"],
     expiries_to_screen: ["expiries screened per entry", String],
+    min_liquid_legs_per_expiry: ["min liquid strikes per expiry", String],
     strike_band_pct: ["strike band", v => "±" + fmtPctSpot(v)],
     otm_only: ["OTM strikes only (+1 ATM)", v => v ? "on" : "off"],
     min_width_pct: ["min spread width", fmtPctSpot],
@@ -1010,10 +1011,12 @@ const CONFIG_SECTIONS = [
     per_underlying_fraction: ["open risk per underlying", null],
     per_cycle_fraction: ["new premium per cycle", null],
     total_fraction: ["total open premium", null],
+    allow_stacking: ["same-direction add on a held name", v => v ? "on" : "off"],
   }},
   { key: "exits", title: "Mechanical exits", labels: {
     stop_fraction: ["stop-loss", v => `net mark ≤ ${(v * 100).toLocaleString()}% of entry debit`],
     take_profit_mult: ["take-profit", v => `net mark ≥ ${v}× entry debit`],
+    take_profit_width_frac: ["take-profit (width cap, lower one fires)", v => `net mark ≥ ${(v * 100).toLocaleString()}% of strike width`],
     exit_dte: ["force exit at", v => v + " DTE"],
     reversal_exit: ["exit on opposing entry event", v => v ? "on" : "off"],
   }},
